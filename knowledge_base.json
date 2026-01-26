@@ -1,0 +1,116 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "organization": "Manos Unidas"
+  },
+  "proyectos": [
+    {
+      "id": "torneos",
+      "nombre": "Torneos y Concursos",
+      "url": "concursos.html",
+      "descripcion": "Diversos torneos para todos los gustos: videojuegos, deportes y juegos de mesa"
+    },
+    {
+      "id": "podcast",
+      "nombre": "Podcast Manos Unidas",
+      "url": "podcast.html",
+      "descripcion": "Programa realizado por manos unidas los viernes con invitados especiales"
+    },
+    {
+      "id": "correcaminatas",
+      "nombre": "Correcaminatas",
+      "url": "correcaminatas.html",
+      "descripcion": "Eventos deportivos por las sierras de la ciudad promoviendo vida saludable"
+    },
+    {
+      "id": "materiales",
+      "nombre": "Proyecto Materiales",
+      "url": "materiales.html",
+      "descripcion": "Sistema colaborativo de inversión para compra de materiales escolares compartidos"
+    },
+    {
+      "id": "pared-creativa",
+      "nombre": "Pared Creativa",
+      "url": "pared-creativa.html",
+      "descripcion": "Espacio creativo compartido para expresión artística de toda la comunidad"
+    },
+    {
+      "id": "esencia",
+      "nombre": "E.S.E.N.C.I.A",
+      "url": "esencia.html",
+      "descripcion": "Reforma del sistema educativo para mayor flexibilidad y modernización"
+    }
+  ],
+  "formularios": [
+    {
+      "id": "propuesta",
+      "nombre": "Propuesta de Proyecto",
+      "emoji": "💡",
+      "descripcion": "Envía tus ideas innovadoras"
+    },
+    {
+      "id": "sugerencia",
+      "nombre": "Sugerencias",
+      "emoji": "✏️",
+      "descripcion": "Ayúdanos a mejorar con tus comentarios"
+    },
+    {
+      "id": "problema",
+      "nombre": "Reportar Problema",
+      "emoji": "⚠️",
+      "descripcion": "Reporta errores o problemas técnicos"
+    },
+    {
+      "id": "torneo",
+      "nombre": "Inscripción a Torneos",
+      "emoji": "🎮",
+      "descripcion": "Regístrate para participar en torneos"
+    },
+    {
+      "id": "sivia",
+      "nombre": "Feedback SIVIA",
+      "emoji": "🤖",
+      "descripcion": "Ayuda a mejorar SIVIA con tu experiencia"
+    },
+    {
+      "id": "contacto",
+      "nombre": "Contacto Centro de Estudiantes",
+      "emoji": "📧",
+      "descripcion": "Envía un mensaje directo al CE"
+    }
+  ],
+  "preguntas_frecuentes": [
+    {
+      "pregunta": "¿Qué es Manos Unidas?",
+      "respuesta": "Manos Unidas es el Centro de Estudiantes que desarrolla proyectos innovadores para mejorar la experiencia escolar."
+    },
+    {
+      "pregunta": "¿Cuáles son los torneos disponibles?",
+      "respuesta": "Tenemos 6 torneos: Truco, Valorant, Minecraft, Fútbol, Ajedrez y UNO."
+    },
+    {
+      "pregunta": "¿Cuándo es el podcast?",
+      "respuesta": "El podcast de Manos Unidas se transmite todos los viernes."
+    },
+    {
+      "pregunta": "¿Qué es E.S.E.N.C.I.A?",
+      "respuesta": "E.S.E.N.C.I.A es una propuesta de reforma del sistema educativo para hacerlo más flexible."
+    },
+    {
+      "pregunta": "¿Cómo participar en el Proyecto Materiales?",
+      "respuesta": "Tu delegado pregunta qué materiales necesitan. Si quieres invertir, contribuyes con dinero para comprar materiales de calidad."
+    },
+    {
+      "pregunta": "¿Dónde es la Pared Creativa?",
+      "respuesta": "La Pared Creativa es un espacio dentro de la institución donde todos pueden dibujar y escribir."
+    },
+    {
+      "pregunta": "¿Qué son las Correcaminatas?",
+      "respuesta": "Son eventos deportivos por las sierras donde puedes caminar o correr para promover vida saludable."
+    },
+    {
+      "pregunta": "¿Cómo envío una propuesta?",
+      "respuesta": "Ve a la sección Formularios y selecciona 'Propuesta de Proyecto'."
+    }
+  ]
+}
