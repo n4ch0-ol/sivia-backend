@@ -7,17 +7,15 @@ import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 from dotenv import load_dotenv
-
-# --- NUEVAS LIBRERÍAS PARA EL "WALKIE-TALKIE" ---
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-# -----------------------------------------------
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-KNOWLEDGE_FILE = "knowledge_sivia.json"
+KNOWLEDGE_FILE = "knowledge_base.json"  # ← CAMBIO AQUÍ
 TRUSTED_DOMAINS = [".org", ".gob", ".ong", ".gov", ".edu", ".ac."]
+
 SIVIA_IDENTITY = """
 Soy SIVIA (Sistema de Innovación Virtual con Inteligencia Aplicada), una asistente virtual.
 Mi personalidad:
@@ -30,39 +28,79 @@ Mi propósito es asistir y responder preguntas de manera útil y confiable.
 Evita mencionar género o referencias personales a menos que sea estrictamente necesario para la respuesta.
 """
 
-# Render usará "Environment Variables", esto funcionará
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") 
 if not GOOGLE_API_KEY:
-    # Esta línea es importante para que Render te avise si olvidaste la clave
     raise ValueError("❌ No se encontró la GOOGLE_API_KEY en las variables de entorno.")
 
 genai.configure(api_key=GOOGLE_API_KEY)
 GENAI_MODEL = os.getenv("GENAI_MODEL", "models/gemini-2.5-flash")
 
 def load_knowledge():
-    # En un servidor, es mejor no escribir archivos, así que simplificamos
+    """Carga la base de conocimiento JSON"""
     if os.path.exists(KNOWLEDGE_FILE):
-        with open(KNOWLEDGE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {
-        "identidad": SIVIA_IDENTITY,
-        "memoria_corto_plazo": [],
-        "propuestas_estudiantiles": "Aún no tengo información específica sobre las propuestas.",
-        "temas_conocidos": ["tecnologia", "ciencia", "propuestas", "cultura general"]
-    }
+        try:
+            with open(KNOWLEDGE_FILE, "r", encoding="utf-8") as f:
+                knowledge = json.load(f)
+                logging.info("✅ Base de conocimiento cargada exitosamente")
+                return knowledge
+        except json.JSONDecodeError:
+            logging.error("❌ Error al parsear el JSON")
+            return get_default_knowledge()
+    else:
+        logging.warning(f"⚠️ {KNOWLEDGE_FILE} no encontrado, usando base vacía")
+        return get_default_knowledge()
 
-# (Nota: save_knowledge no se usará en un servidor 'Free' de Render 
-# porque el sistema de archivos se resetea. La IA no tendrá memoria a largo plazo.)
+def get_default_knowledge():
+    """Retorna una estructura por defecto si no hay JSON"""
+    return {
+        "metadata": {
+            "version": "1.0",
+            "organization": "Manos Unidas"
+        },
+        "proyectos": [],
+        "formularios": [],
+        "preguntas_frecuentes": [],
+        "identidad": SIVIA_IDENTITY,
+        "memoria_corto_plazo": []
+    }
 
 class CognitiveEngine:
     def __init__(self, knowledge):
         self.knowledge = knowledge
         self.genai_model = genai.GenerativeModel(GENAI_MODEL)
+        
+        # Crear un contexto con la base de datos
+        context = self._build_context()
+        
         self.chat_session = self.genai_model.start_chat(history=[
-            {"role": "user", "parts": [knowledge["identidad"]]},
-            {"role": "model", "parts": ["Entendido. Actuaré como SIVIA."]}
+            {"role": "user", "parts": [context]},
+            {"role": "model", "parts": ["Entendido. Soy SIVIA, asistente de Manos Unidas. Tengo toda la información del sitio disponible."]}
         ])
-        logging.info(f"Modelo {GENAI_MODEL} cargado. SIVIA lista.")
+        logging.info(f"✅ Modelo {GENAI_MODEL} cargado. SIVIA lista con contexto completo.")
+
+    def _build_context(self):
+        """Construye el contexto a partir de la base de conocimiento"""
+        projects_info = json.dumps(self.knowledge.get("proyectos", []), indent=2, ensure_ascii=False)
+        faqs_info = json.dumps(self.knowledge.get("preguntas_frecuentes", []), indent=2, ensure_ascii=False)
+        forms_info = json.dumps(self.knowledge.get("formularios", []), indent=2, ensure_ascii=False)
+        
+        context = f"""
+{SIVIA_IDENTITY}
+
+BASE DE CONOCIMIENTO DE MANOS UNIDAS:
+
+PROYECTOS:
+{projects_info}
+
+PREGUNTAS FRECUENTES:
+{faqs_info}
+
+FORMULARIOS:
+{forms_info}
+
+Usa esta información para responder preguntas sobre Manos Unidas de manera precisa y amigable.
+"""
+        return context
 
     def _safe_web_search(self, query):
         logging.info(f"🔎 Iniciando búsqueda web: {query}")
@@ -89,80 +127,93 @@ class CognitiveEngine:
             return "Error al conectar con el motor de búsqueda."
 
     def respond(self, text):
+        """Responde a la pregunta del usuario"""
         text_lower = text.lower()
+        
+        # Si pregunta por web, busca en internet
         if text_lower.startswith("buscar web sobre"):
             query = text[17:].strip()
             if not query:
                 return "QUERY", "Por favor, dime qué tema quieres buscar.", ""
             search_result = self._safe_web_search(query)
-            contexto = f"Contexto de búsqueda web sobre '{query}':\n{search_result}"
-            response = self._generate_response(f"Basado en el contexto, responde la pregunta: {query}", contexto)
+            response = self._generate_response(f"Responde sobre: {query}", search_result)
             return "WEB", response, query
         
-        contexto = f"Memoria (volátil): {self.knowledge.get('memoria_corto_plazo', [])}"
-        response = self._generate_response(text, contexto)
+        # Si no, usa la base de conocimiento local
+        response = self._generate_response(text, "")
         return "KNOWLEDGE", response, ""
 
-    def _generate_response(self, prompt, contexto):
-        full_prompt = f"{contexto}\n\nPregunta del usuario: {prompt}\n\nSIVIA:"
+    def _generate_response(self, prompt, contexto=""):
+        """Genera respuesta usando Gemini"""
         try:
-            response = self.chat_session.send_message(full_prompt)
+            full_message = f"{prompt}\n{contexto}" if contexto else prompt
+            response = self.chat_session.send_message(full_message)
             texto_respuesta = response.text
         except Exception as e:
-            logging.error(f"Error en Gemini: {e}")
-            texto_respuesta = "Lo siento, estoy teniendo problemas de conexión con mi cerebro (Gemini)."
+            logging.error(f"❌ Error en Gemini: {e}")
+            texto_respuesta = "Lo siento, estoy teniendo problemas de conexión."
         
-        # Filtro de seguridad
-        if len(texto_respuesta.strip()) < 20 or "no entiendo" in texto_respuesta.lower():
-            texto_respuesta = "No estoy segura de cómo responder a eso. ¿Puedes reformular tu pregunta o pedirme que busque en la web? (Ej: 'buscar web sobre...') "
+        if len(texto_respuesta.strip()) < 10:
+            texto_respuesta = "No estoy segura de cómo responder eso. ¿Puedes reformular tu pregunta?"
         
         return texto_respuesta
 
 # -----------------------------------------------
-# ¡AQUÍ EMPIEZA EL "WALKIE-TALKIE" (FLASK)!
+# FLASK - EL "WALKIE-TALKIE"
 # -----------------------------------------------
 
 app = Flask(__name__)
-# CORS(app) permite que tu 'Tienda' (GitHub Pages) llame a este 'Taller' (Render)
-CORS(app) 
+CORS(app)  # Permite que GitHub Pages llame a este servidor
 
-# 1. Cargamos a SIVIA una sola vez al arrancar el servidor
+# Cargar SIVIA al iniciar
 try:
     kb = load_knowledge()
     engine = CognitiveEngine(kb)
+    logging.info("🤖 SIVIA iniciada correctamente")
 except Exception as e:
-    print(f"❌ Error crítico al iniciar SIVIA: {e}")
+    logging.error(f"❌ Error crítico al iniciar SIVIA: {e}")
     engine = None
 
-# 2. Esta es la "frecuencia" /chat por donde llegan las llamadas
 @app.route("/chat", methods=['POST'])
 def handle_chat():
+    """Endpoint que recibe preguntas del sitio web"""
     global engine
+    
     if not engine:
-        return jsonify({"answer": "Lo siento, SIVIA no está disponible en este momento."}), 500
-
-    # Lee la pregunta que mandó el sivia.js
-    user_question = request.json.get("question")
-    if not user_question:
-        return jsonify({"error": "No enviaste ninguna pregunta."}), 400
+        return jsonify({"answer": "SIVIA no está disponible en este momento."}), 500
 
     try:
-        # 3. Le pasa la pregunta a SIVIA
+        data = request.json
+        user_question = data.get("question")
+        
+        if not user_question:
+            return jsonify({"error": "No enviaste ninguna pregunta."}), 400
+
+        # Procesar con SIVIA
         intent, response, _ = engine.respond(user_question)
         
-        # 4. Devuelve la respuesta al sivia.js
-        return jsonify({"answer": response})
+        logging.info(f"✅ Pregunta: {user_question[:50]}... | Respuesta: {response[:50]}...")
+        
+        return jsonify({
+            "answer": response,
+            "intent": intent,
+            "timestamp": datetime.now().isoformat()
+        })
         
     except Exception as e:
-        print(f"Error procesando la respuesta: {e}")
-        return jsonify({"answer": "Tuve un problema para procesar eso."}), 500
+        logging.error(f"❌ Error procesando: {e}")
+        return jsonify({"answer": "Tuve un problema procesando tu pregunta."}), 500
 
-# Esta ruta es solo para probar que el Taller funciona
 @app.route("/")
 def hello():
-    return "¡El Taller Mágico de SIVIA (Python) está online!"
+    """Test endpoint"""
+    return "🤖 SIVIA Backend está online y listo"
 
-# Esto hace que el servidor arranque (Render lo usa)
+@app.route("/health")
+def health():
+    """Health check para Render"""
+    return jsonify({"status": "online", "sivia": "ready"})
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000)) # Render prefiere el puerto 10000
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
