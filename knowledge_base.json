@@ -1,44 +1,133 @@
 {
   "metadata": {
     "version": "1.0",
-    "organization": "Manos Unidas"
+    "organization": "Manos Unidas - Centro de Estudiantes",
+    "lastUpdated": "2026-01-15",
+    "language": "es"
   },
   "proyectos": [
     {
       "id": "torneos",
       "nombre": "Torneos y Concursos",
       "url": "concursos.html",
-      "descripcion": "Diversos torneos para todos los gustos: videojuegos, deportes y juegos de mesa"
+      "descripcion": "Diversos torneos para todos los gustos: videojuegos, deportes y juegos de mesa",
+      "torneos": [
+        {
+          "nombre": "Truco",
+          "emoji": "♦",
+          "descripcion": "Torneo de Truco para fomentar camaradería y astucia con este clásico infaltable",
+          "estado": "En desarrollo"
+        },
+        {
+          "nombre": "Valorant",
+          "emoji": "🎯",
+          "descripcion": "Torneo de videojuego Valorant pensado para los amantes de la acción táctica",
+          "nota": "No se realiza dentro de la institución"
+        },
+        {
+          "nombre": "Minecraft",
+          "emoji": "⛏️",
+          "descripcion": "Concurso de construcción en servidor exclusivo basado en concursos de Globant",
+          "objetivo": "Demostrar creatividad en construcción"
+        },
+        {
+          "nombre": "Fútbol",
+          "emoji": "⚽",
+          "descripcion": "Torneo de fútbol en ambiente competitivo para todos los estudiantes",
+          "nota": "Para quienes no les gustan videojuegos"
+        },
+        {
+          "nombre": "Ajedrez",
+          "emoji": "♟️",
+          "descripcion": "Torneo de ajedrez para estrategas que quieren poner a prueba su inteligencia",
+          "objetivo": "Fomentar creatividad y habilidad"
+        },
+        {
+          "nombre": "UNO",
+          "emoji": "🔴",
+          "descripcion": "Torneo de juego de mesa UNO para quienes prefieren tranquilidad sin pantallas",
+          "nota": "Juego muy popular"
+        }
+      ]
     },
     {
       "id": "podcast",
       "nombre": "Podcast Manos Unidas",
       "url": "podcast.html",
-      "descripcion": "Programa realizado por manos unidas los viernes con invitados especiales"
+      "emoji": "🎙️",
+      "descripcion": "Programa realizado por Manos Unidas los viernes con invitados especiales",
+      "detalles": {
+        "frecuencia": "Semanalmente los viernes",
+        "participantes": "Alumnos y profesores invitados",
+        "temas": [
+          "Proyectos de alumnos invitados",
+          "Consejos educativos de profesores",
+          "Vida escolar",
+          "Anuncios importantes"
+        ],
+        "objetivo": "Crear una instancia de ida y vuelta activa entre alumnos y profesores, espacio para aprender"
+      }
     },
     {
       "id": "correcaminatas",
       "nombre": "Correcaminatas",
       "url": "correcaminatas.html",
-      "descripcion": "Eventos deportivos por las sierras de la ciudad promoviendo vida saludable"
+      "emoji": "🏃",
+      "descripcion": "Eventos deportivos por las sierras de la ciudad promoviendo vida saludable",
+      "detalles": {
+        "tipo": "Evento deportivo",
+        "ubicacion": "Sierras de la ciudad",
+        "actividades": ["Caminar", "Correr"],
+        "objetivos": [
+          "Promover estilo de vida saludable",
+          "Fomentar trabajo en equipo y solidaridad",
+          "Crear espacio de recreación fuera del aula",
+          "Desarrollar comunidad activa y diversa",
+          "Recaudar dinero mediante entradas"
+        ]
+      }
     },
     {
       "id": "materiales",
       "nombre": "Proyecto Materiales",
       "url": "materiales.html",
-      "descripcion": "Sistema colaborativo de inversión para compra de materiales escolares compartidos"
+      "emoji": "📦",
+      "descripcion": "Sistema colaborativo de inversión para compra de materiales escolares compartidos",
+      "detalles": {
+        "origen": "Idea implementada en 4to año",
+        "proceso": [
+          "Delegado pregunta qué materiales hace falta en el salón",
+          "Se identifica quiénes quieren invertir",
+          "Se recauda dinero separado por salones",
+          "Se compran materiales",
+          "Uso compartido entre todos los inversores del salón"
+        ],
+        "beneficio": "Todos usan materiales de calidad compartidos"
+      }
     },
     {
       "id": "pared-creativa",
       "nombre": "Pared Creativa",
       "url": "pared-creativa.html",
-      "descripcion": "Espacio creativo compartido para expresión artística de toda la comunidad"
+      "emoji": "🎨",
+      "descripcion": "Espacio creativo compartido para expresión artística de toda la comunidad",
+      "detalles": {
+        "tipo": "Proyecto a largo plazo",
+        "material": "Similar a pizarrón plástico - borrable y cómodo",
+        "normas": "Acorde al vocabulario e institucionales",
+        "importancia": "Permite libertad creativa de los alumnos"
+      }
     },
     {
       "id": "esencia",
       "nombre": "E.S.E.N.C.I.A",
       "url": "esencia.html",
-      "descripcion": "Reforma del sistema educativo para mayor flexibilidad y modernización"
+      "emoji": "📚",
+      "descripcion": "Reforma del sistema educativo para mayor flexibilidad y modernización",
+      "detalles": {
+        "tipo": "Propuesta de reforma educativa",
+        "objetivo": "Hacer el sistema educativo más flexible"
+      }
     }
   ],
   "formularios": [
@@ -46,71 +135,121 @@
       "id": "propuesta",
       "nombre": "Propuesta de Proyecto",
       "emoji": "💡",
-      "descripcion": "Envía tus ideas innovadoras"
+      "descripcion": "Envía tus ideas innovadoras",
+      "campos": ["nombre", "email", "mensaje"]
     },
     {
       "id": "sugerencia",
       "nombre": "Sugerencias",
       "emoji": "✏️",
-      "descripcion": "Ayúdanos a mejorar con tus comentarios"
+      "descripcion": "Ayúdanos a mejorar con tus comentarios",
+      "campos": ["nombre", "email", "mensaje"]
     },
     {
       "id": "problema",
       "nombre": "Reportar Problema",
       "emoji": "⚠️",
-      "descripcion": "Reporta errores o problemas técnicos"
+      "descripcion": "Reporta errores o problemas técnicos",
+      "campos": ["nombre", "email", "mensaje"]
     },
     {
       "id": "torneo",
       "nombre": "Inscripción a Torneos",
       "emoji": "🎮",
-      "descripcion": "Regístrate para participar en torneos"
+      "descripcion": "Regístrate para participar en torneos",
+      "campos": ["nombre", "email", "mensaje"]
     },
     {
       "id": "sivia",
       "nombre": "Feedback SIVIA",
       "emoji": "🤖",
-      "descripcion": "Ayuda a mejorar SIVIA con tu experiencia"
+      "descripcion": "Ayuda a mejorar SIVIA con tu experiencia",
+      "campos": ["nombre", "email", "mensaje"]
     },
     {
       "id": "contacto",
       "nombre": "Contacto Centro de Estudiantes",
       "emoji": "📧",
-      "descripcion": "Envía un mensaje directo al CE"
+      "descripcion": "Envía un mensaje directo al CE",
+      "campos": ["nombre", "email", "mensaje"]
     }
   ],
   "preguntas_frecuentes": [
     {
       "pregunta": "¿Qué es Manos Unidas?",
-      "respuesta": "Manos Unidas es el Centro de Estudiantes que desarrolla proyectos innovadores para mejorar la experiencia escolar."
+      "respuesta": "Manos Unidas es el Centro de Estudiantes que desarrolla proyectos innovadores para mejorar la experiencia escolar. Somos un espacio colaborativo donde estudiantes pueden proponer, organizar y participar en iniciativas educativas, recreativas y solidarias."
     },
     {
       "pregunta": "¿Cuáles son los torneos disponibles?",
-      "respuesta": "Tenemos 6 torneos: Truco, Valorant, Minecraft, Fútbol, Ajedrez y UNO."
+      "respuesta": "Tenemos 6 torneos: Truco (♦), Valorant (🎯), Minecraft (⛏️), Fútbol (⚽), Ajedrez (♟️) y UNO (🔴). Cada uno pensado para diferentes intereses."
     },
     {
       "pregunta": "¿Cuándo es el podcast?",
-      "respuesta": "El podcast de Manos Unidas se transmite todos los viernes."
+      "respuesta": "El podcast de Manos Unidas se transmite todos los viernes. En él invitamos a alumnos y profesores para hablar de proyectos, consejos educativos y vida escolar."
     },
     {
       "pregunta": "¿Qué es E.S.E.N.C.I.A?",
-      "respuesta": "E.S.E.N.C.I.A es una propuesta de reforma del sistema educativo para hacerlo más flexible."
+      "respuesta": "E.S.E.N.C.I.A es una propuesta de reforma del sistema educativo que buscamos implementar. El objetivo es hacer el sistema más flexible y adaptado a las necesidades de los estudiantes actuales."
     },
     {
       "pregunta": "¿Cómo participar en el Proyecto Materiales?",
-      "respuesta": "Tu delegado pregunta qué materiales necesitan. Si quieres invertir, contribuyes con dinero para comprar materiales de calidad."
+      "respuesta": "Tu delegado de curso pregunta qué materiales necesitan. Si quieres invertir, contribuyes con dinero que se usa para comprar materiales de calidad que todos en tu salón pueden usar."
     },
     {
       "pregunta": "¿Dónde es la Pared Creativa?",
-      "respuesta": "La Pared Creativa es un espacio dentro de la institución donde todos pueden dibujar y escribir."
+      "respuesta": "La Pared Creativa es un espacio de expresión dentro de la institución. Es un pizarrón borrable donde todos pueden dibujar y escribir, respetando las normas escolares."
     },
     {
       "pregunta": "¿Qué son las Correcaminatas?",
-      "respuesta": "Son eventos deportivos por las sierras donde puedes caminar o correr para promover vida saludable."
+      "respuesta": "Son eventos deportivos por las sierras de la ciudad. Puedes caminar o correr según tu ritmo. El objetivo es promover vida saludable, solidaridad y recaudar dinero."
     },
     {
-      "pregunta": "¿Cómo envío una propuesta?",
-      "respuesta": "Ve a la sección Formularios y selecciona 'Propuesta de Proyecto'."
+      "pregunta": "¿Cómo puedo enviar una propuesta?",
+      "respuesta": "Ve a la sección Formularios y selecciona 'Propuesta de Proyecto'. Completa el formulario con tu idea y nos la revisaremos pronto."
+    },
+    {
+      "pregunta": "¿Cómo contacto al Centro de Estudiantes?",
+      "respuesta": "Puedes usar el formulario 'Contacto CE' en la sección Formularios, o enviar un email directo. También puedes presentar tus ideas en las asambleas estudiantiles."
+    },
+    {
+      "pregunta": "¿Quién es SIVIA?",
+      "respuesta": "Soy SIVIA, tu asistente de Manos Unidas. Estoy aquí para responder todas tus preguntas sobre los proyectos, torneos, formularios y cualquier cosa relacionada con el Centro de Estudiantes."
+    }
+  ],
+  "contacto": {
+    "nombre_organizacion": "Manos Unidas - Centro de Estudiantes",
+    "email": "contacto@manosunidas.edu.ar",
+    "redes_sociales": {
+      "instagram": "@manosunidas_ce",
+      "twitter": "@manosunidas"
+    },
+    "ubicacion": "Institución educativa"
+  },
+  "navegacion": [
+    {
+      "pagina": "Inicio",
+      "url": "index.html",
+      "descripcion": "Página principal con todas nuestras propuestas"
+    },
+    {
+      "pagina": "SIVIA",
+      "url": "sivia.html",
+      "descripcion": "Chat con asistente de IA SIVIA"
+    },
+    {
+      "pagina": "Torneos",
+      "url": "concursos.html",
+      "descripcion": "Ver todos los torneos disponibles"
+    },
+    {
+      "pagina": "Beta Lab",
+      "url": "beta-lab.html",
+      "descripcion": "Nuevas funcionalidades en prueba"
+    },
+    {
+      "pagina": "Formularios",
+      "url": "forms.html",
+      "descripcion": "Enviar propuestas y feedback"
     }
   ]
 }
