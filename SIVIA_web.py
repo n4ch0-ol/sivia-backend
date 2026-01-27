@@ -9,6 +9,9 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import time
+import jwt
+from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -64,6 +67,85 @@ def get_default_knowledge():
         "memoria_corto_plazo": []
     }
 
+# Nuevos archivos para persistencia ligera
+USERS_FILE = "users.json"
+VOTES_FILE = "votes.json"
+JWT_SECRET = os.getenv("JWT_SECRET", "cambia_esto_por_una_clave_segura")
+
+def load_json_or_default(path, default):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Error leyendo {path}: {e}")
+    return default
+
+def save_json(path, data):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.error(f"Error guardando {path}: {e}")
+
+# Usuarios
+def load_users():
+    return load_json_or_default(USERS_FILE, {})
+
+def save_users(users):
+    save_json(USERS_FILE, users)
+
+# Votos
+def load_votes():
+    return load_json_or_default(VOTES_FILE, {})
+
+def save_votes(votes):
+    save_json(VOTES_FILE, votes)
+
+# Util: crear token JWT
+def create_token(username, email):
+    payload = {"sub": username, "email": email, "iat": int(time.time())}
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    return token
+
+def verify_token(token):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return payload
+    except Exception:
+        return None
+
+# Decorator simple para endpoints protegidos
+from functools import wraps
+def require_auth(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return jsonify({"error": "No autorizado"}), 401
+        token = auth.split(" ", 1)[1]
+        payload = verify_token(token)
+        if not payload:
+            return jsonify({"error": "Token inválido"}), 401
+        request.user = payload  # attach
+        return f(*args, **kwargs)
+    return wrapper
+
+# BÚSQUEDA LOCAL en knowledge (fallback)
+def local_search_in_knowledge(knowledge, question):
+    q = question.lower()
+    # FAQs exact/contains
+    for faq in knowledge.get("preguntas_frecuentes", []):
+        if faq.get("pregunta") and faq["pregunta"].lower() in q:
+            return faq.get("respuesta")
+    # buscar por palabras clave en proyectos
+    for p in knowledge.get("proyectos", []):
+        if p.get("nombre") and p["nombre"].lower() in q:
+            return p.get("descripcion")
+    # fallback: return short summary
+    return "No tengo una respuesta exacta en la base local. Puedo intentar buscar en la web si quieres."
+
+# Mejorar _generate_response con retries/backoff y fallback
 class CognitiveEngine:
     def __init__(self, knowledge):
         self.knowledge = knowledge
@@ -144,19 +226,30 @@ Usa esta información para responder preguntas sobre Manos Unidas de manera prec
         return "KNOWLEDGE", response, ""
 
     def _generate_response(self, prompt, contexto=""):
-        """Genera respuesta usando Gemini"""
-        try:
-            full_message = f"{prompt}\n{contexto}" if contexto else prompt
-            response = self.chat_session.send_message(full_message)
-            texto_respuesta = response.text
-        except Exception as e:
-            logging.error(f"❌ Error en Gemini: {e}")
-            texto_respuesta = "Lo siento, estoy teniendo problemas de conexión."
-        
-        if len(texto_respuesta.strip()) < 10:
-            texto_respuesta = "No estoy segura de cómo responder eso. ¿Puedes reformular tu pregunta?"
-        
-        return texto_respuesta
+        """Genera respuesta usando Gemini con retries y fallback local."""
+        full_message = f"{prompt}\n{contexto}" if contexto else prompt
+        max_retries = 3
+        backoff = 1
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self.chat_session.send_message(full_message)
+                texto_respuesta = response.text
+                # si respuesta vacía o corta, continuar/intent
+                if texto_respuesta and len(texto_respuesta.strip()) >= 10:
+                    return texto_respuesta
+            except Exception as e:
+                err = str(e).lower()
+                logging.error(f"Error en Gemini intento {attempt}: {e}")
+                # detectar límites
+                if "quota" in err or "rate" in err or "limit" in err or "exceeded" in err:
+                    logging.warning("Detected quota/rate error from Gemini, will fallback to local knowledge.")
+                    # fallback local usando la knowledge cargada
+                    return local_search_in_knowledge(self.knowledge, prompt)
+                # en otros errores: reintentar con backoff
+            time.sleep(backoff)
+            backoff *= 2
+        # Si agotó reintentos, fallback local
+        return local_search_in_knowledge(self.knowledge, prompt)
 
 # -----------------------------------------------
 # FLASK - EL "WALKIE-TALKIE"
@@ -214,6 +307,82 @@ def health():
     """Health check para Render"""
     return jsonify({"status": "online", "sivia": "ready"})
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    data = request.json or {}
+    username = data.get("username", "").strip()
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+    if not username or not email or not password:
+        return jsonify({"error": "username, email y password son requeridos"}), 400
+    # dominio permitido
+    if not email.endswith("@colegioaprenderes.edu.ar"):
+        return jsonify({"error": "Solo cuentas del colegio están permitidas"}), 403
+    users = load_users()
+    if email in users:
+        return jsonify({"error": "Usuario ya registrado"}), 400
+    users[email] = {
+        "username": username,
+        "password_hash": generate_password_hash(password),
+        "created_at": datetime.utcnow().isoformat()
+    }
+    save_users(users)
+    token = create_token(username, email)
+    return jsonify({"message": "Registrado", "token": token, "username": username})
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    data = request.json or {}
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+    if not email or not password:
+        return jsonify({"error": "email y password son requeridos"}), 400
+    users = load_users()
+    user = users.get(email)
+    if not user or not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "Credenciales inválidas"}), 401
+    token = create_token(user["username"], email)
+    return jsonify({"message": "Autenticado", "token": token, "username": user["username"]})
+
+@app.route("/api/vote", methods=["POST"])
+@require_auth
+def api_vote():
+    data = request.json or {}
+    experiment = data.get("experiment")
+    vote = int(data.get("vote", 0))
+    if not experiment or vote not in (1, -1):
+        return jsonify({"error": "Parametros invalidos"}), 400
+    votes = load_votes()
+    if experiment not in votes:
+        votes[experiment] = {"util": 0, "noUtil": 0}
+    if vote > 0:
+        votes[experiment]["util"] += 1
+    else:
+        votes[experiment]["noUtil"] += 1
+    save_votes(votes)
+    return jsonify({"message": "Voto registrado", "votes": votes[experiment]})
+
+# Nuevo: obtener perfil del token
+@app.route("/api/profile", methods=["GET"])
+@require_auth
+def api_profile():
+    payload = request.user  # inyectado por require_auth
+    return jsonify({
+        "username": payload.get("sub"),
+        "email": payload.get("email")
+    })
+
+# Nuevo: devolver todos los votos
+@app.route("/api/votes", methods=["GET"])
+def api_votes():
+    votes = load_votes()
+    return jsonify(votes)
+
+# Nuevo: devolver votos de un experimento concreto
+@app.route("/api/votes/<experiment>", methods=["GET"])
+def api_votes_experiment(experiment):
+    votes = load_votes()
+    exp = votes.get(experiment)
+    if not exp:
+        return jsonify({"util": 0, "noUtil": 0})
+    return jsonify(exp)
