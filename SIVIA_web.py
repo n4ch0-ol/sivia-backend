@@ -1,13 +1,9 @@
 import os
 import json
-import logging  # <--- ESTA LÍNEA DEBE ESTAR AQUÍ
+import logging
 import base64
-from datetime import datetime
-from urllib.parse import urlparse
 import requests
-from bs4 import BeautifulSoup
 import google.generativeai as genai
-from google.generativeai.types import content_types
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -110,5 +106,6 @@ def hello():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+
 
 
