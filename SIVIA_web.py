@@ -33,21 +33,19 @@ class CognitiveEngine:
     def __init__(self, knowledge):
         self.knowledge = knowledge
         
-        # Sintaxis simplificada para evitar errores de versión de tipos
-        # Esta forma le dice a Gemini: "Usa el buscador" sin importar la versión exacta del SDK
-        self.genai_model = genai.GenerativeModel(
-            model_name=GENAI_MODEL,
-            tools=[{"google_search_retrieval": {}}] 
-        )
-        self.chat_session = self.genai_model.start_chat(history=[])
-        logging.info(f"Modelo {GENAI_MODEL} cargado con búsqueda web.")
-
-        self.genai_model = genai.GenerativeModel(
-            model_name=GENAI_MODEL,
-            tools=[google_search_tool]
-        )
-        self.chat_session = self.genai_model.start_chat(history=[])
-        logging.info(f"Modelo {GENAI_MODEL} cargado con Deep Research activo.")
+        # Usamos la sintaxis de diccionario directo para evitar errores de nombres
+        try:
+            self.genai_model = genai.GenerativeModel(
+                model_name=GENAI_MODEL,
+                tools=[{"google_search_retrieval": {}}] 
+            )
+            self.chat_session = self.genai_model.start_chat(history=[])
+            logging.info(f"✅ SIVIA lista y conectada a Google Search.")
+        except Exception as e:
+            logging.error(f"❌ Error al inicializar el modelo: {e}")
+            # Si falla la búsqueda, intentamos cargar el modelo básico para que al menos responda
+            self.genai_model = genai.GenerativeModel(model_name=GENAI_MODEL)
+            self.chat_session = self.genai_model.start_chat(history=[])
 
     def respond(self, text, image_b64=None):
         content_parts = []
@@ -106,6 +104,7 @@ def hello():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+
 
 
 
