@@ -17,7 +17,7 @@ if not GOOGLE_API_KEY:
     raise ValueError("❌ No se encontró la GOOGLE_API_KEY en las variables de entorno.")
 
 genai.configure(api_key=GOOGLE_API_KEY)
-GENAI_MODEL = "gemini-1.5-flash-latest"
+GENAI_MODEL = "gemini-1.5-flash"
 
 def load_knowledge():
     if os.path.exists(KNOWLEDGE_FILE):
@@ -29,21 +29,20 @@ Mi personalidad: amigable, profesional y experta. Ayudo con temas generales y de
         "memoria_corto_plazo": []
     }
 
+
 class CognitiveEngine:
     def __init__(self, knowledge):
         self.knowledge = knowledge
-        
-        # Usamos la sintaxis de diccionario directo para evitar errores de nombres
         try:
             self.genai_model = genai.GenerativeModel(
-                model_name=GENAI_MODEL,
-                tools=[{"google_search_retrieval": {}}] 
+                model_name=GENAI_MODEL, # Aquí usará "gemini-1.5-flash"
+                tools=[{"google_search_retrieval": {}}]
             )
             self.chat_session = self.genai_model.start_chat(history=[])
-            logging.info(f"✅ SIVIA lista y conectada a Google Search.")
+            logging.info(f"✅ SIVIA lista con {GENAI_MODEL}")
         except Exception as e:
-            logging.error(f"❌ Error al inicializar el modelo: {e}")
-            # Si falla la búsqueda, intentamos cargar el modelo básico para que al menos responda
+            logging.error(f"Error: {e}")
+            # Fallback total si la herramienta de búsqueda falla
             self.genai_model = genai.GenerativeModel(model_name=GENAI_MODEL)
             self.chat_session = self.genai_model.start_chat(history=[])
 
@@ -104,6 +103,7 @@ def hello():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+
 
 
 
