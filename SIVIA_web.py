@@ -1,12 +1,4 @@
-import os
-import json
-import logging
-import base64
-from datetime import datetime
-from urllib.parse import urlparse
-import requests
-from bs4 import BeautifulSoup
-import google.generativeai as genai
+from google.generativeai.types import content_types
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -20,7 +12,6 @@ if not GOOGLE_API_KEY:
     raise ValueError("❌ No se encontró la GOOGLE_API_KEY en las variables de entorno.")
 
 genai.configure(api_key=GOOGLE_API_KEY)
-# Gemini 1.5 Flash es necesario para herramientas y visión
 GENAI_MODEL = "gemini-1.5-flash"
 
 def load_knowledge():
@@ -29,45 +20,48 @@ def load_knowledge():
             return json.load(f)
     return {
         "identidad": """Soy SIVIA (Sistema de Innovación Virtual con Inteligencia Aplicada), una asistente virtual.
-Mi personalidad:
-- Amigable y empática
-- Profesional y clara
-- Comprometida con ayudar a cualquier usuario
-- Experta en temas generales y tecnológicos
-Mi propósito es asistir y responder preguntas de manera útil y confiable.""",
+Mi personalidad: amigable, profesional y experta. Ayudo con temas generales y del centro de estudiantes.""",
         "memoria_corto_plazo": []
     }
 
 class CognitiveEngine:
     def __init__(self, knowledge):
         self.knowledge = knowledge
-        # Se inicializa con la herramienta de búsqueda de Google activa
+        
+        # CORRECCIÓN DE DEEP RESEARCH: Nueva forma de declarar herramientas
+        # Esto permite que Gemini busque en Google de forma oficial.
+        google_search_tool = content_types.Tool(
+            google_search_retrieval=content_types.GoogleSearchRetrieval(
+                dynamic_threshold_config=content_types.DynamicThresholdConfig(
+                    mode=content_types.DynamicThresholdConfig.Mode.AUTO,
+                    dynamic_threshold=0.3,
+                )
+            )
+        )
+
         self.genai_model = genai.GenerativeModel(
             model_name=GENAI_MODEL,
-            tools=[{'google_search': {}}]
+            tools=[google_search_tool]
         )
         self.chat_session = self.genai_model.start_chat(history=[])
-        logging.info(f"Modelo {GENAI_MODEL} cargado con Google Search.")
+        logging.info(f"Modelo {GENAI_MODEL} cargado con Deep Research activo.")
 
     def respond(self, text, image_b64=None):
         content_parts = []
         
-        # Si hay imagen, se adjunta primero
         if image_b64:
             content_parts.append({
                 "mime_type": "image/jpeg",
                 "data": image_b64
             })
         
-        # Lógica de generación de imágenes (Pollinations)
         text_lower = text.lower()
         if "genera una imagen" in text_lower or "dibuja" in text_lower:
             prompt = text_lower.replace("genera una imagen de", "").replace("dibuja", "").strip()
             url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?width=1024&height=1024&nologo=true"
             return f"He generado esta imagen para ti: {url}"
 
-        # Prompt con identidad
-        full_prompt = f"{self.knowledge['identidad']}\n\nPregunta del usuario: {text}"
+        full_prompt = f"{self.knowledge.get('identidad', '')}\n\nPregunta del usuario: {text}"
         content_parts.append(full_prompt)
 
         try:
@@ -84,7 +78,7 @@ try:
     kb = load_knowledge()
     engine = CognitiveEngine(kb)
 except Exception as e:
-    print(f"❌ Error crítico: {e}")
+    logging.critical(f"❌ Error crítico al iniciar SIVIA: {e}")
     engine = None
 
 @app.route("/chat", methods=['POST'])
@@ -94,7 +88,7 @@ def handle_chat():
         return jsonify({"answer": "SIVIA no disponible."}), 500
 
     user_question = request.json.get("question", "")
-    image_data = request.json.get("image") # Viene de sivia.js como base64
+    image_data = request.json.get("image")
 
     try:
         response_text = engine.respond(user_question, image_data)
