@@ -37,16 +37,14 @@ class CognitiveEngine:
     def __init__(self, knowledge):
         self.knowledge = knowledge
         
-        # CORRECCIÓN DE DEEP RESEARCH: Nueva forma de declarar herramientas
-        # Esto permite que Gemini busque en Google de forma oficial.
-        google_search_tool = content_types.Tool(
-            google_search_retrieval=content_types.GoogleSearchRetrieval(
-                dynamic_threshold_config=content_types.DynamicThresholdConfig(
-                    mode=content_types.DynamicThresholdConfig.Mode.AUTO,
-                    dynamic_threshold=0.3,
-                )
-            )
+        # Sintaxis simplificada para evitar errores de versión de tipos
+        # Esta forma le dice a Gemini: "Usa el buscador" sin importar la versión exacta del SDK
+        self.genai_model = genai.GenerativeModel(
+            model_name=GENAI_MODEL,
+            tools=[{"google_search_retrieval": {}}] 
         )
+        self.chat_session = self.genai_model.start_chat(history=[])
+        logging.info(f"Modelo {GENAI_MODEL} cargado con búsqueda web.")
 
         self.genai_model = genai.GenerativeModel(
             model_name=GENAI_MODEL,
@@ -112,4 +110,5 @@ def hello():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+
 
