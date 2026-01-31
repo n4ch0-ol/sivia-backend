@@ -13,124 +13,118 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-# Variable para no preguntar el nombre del modelo en cada mensaje
+# Cache para no buscar el modelo todo el tiempo
 CACHED_MODEL_URL = None
 
-# --- PASO 1: DETECTIVE DE MODELOS ---
+# --- DETECTIVE DE MODELOS (Anti-404) ---
 def get_working_url():
-    """Pregunta a Google qué modelo existe realmente y devuelve la URL completa."""
     global CACHED_MODEL_URL
     if CACHED_MODEL_URL: return CACHED_MODEL_URL
 
     try:
-        logging.info("🕵️ Buscando modelos disponibles en tu cuenta...")
         response = requests.get(f"{BASE_URL}/models?key={GOOGLE_API_KEY}")
         data = response.json()
         
         if "models" not in data:
-            logging.error(f"Error listando modelos: {data}")
-            # Fallback desesperado
+            # URL por defecto si falla el listado
             return f"{BASE_URL}/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
 
-        # Filtramos modelos que generen contenido
+        # Buscamos Gemini 1.5 Flash o Pro
         candidates = [m["name"] for m in data["models"] if "generateContent" in m.get("supportedGenerationMethods", [])]
-        
-        logging.info(f"📋 Modelos encontrados: {candidates}")
+        logging.info(f"Modelos: {candidates}")
 
-        # Lógica de selección: Preferimos Flash 1.5 -> Flash -> Pro -> El primero que haya
-        chosen_model = None
+        chosen = None
         for m in candidates:
             if "gemini-1.5-flash" in m: 
-                chosen_model = m
-                break
-        if not chosen_model:
-            for m in candidates:
-                if "gemini-1.5" in m:
-                    chosen_model = m
-                    break
-        if not chosen_model and candidates:
-            chosen_model = candidates[0]
+                chosen = m; break
+        if not chosen: chosen = candidates[0]
 
-        if not chosen_model:
-            raise Exception("No se encontraron modelos compatibles.")
-
-        # Construimos la URL final
-        # Nota: 'chosen_model' ya viene con el prefijo "models/", ej: "models/gemini-1.5-flash-001"
-        final_url = f"{BASE_URL}/{chosen_model}:generateContent?key={GOOGLE_API_KEY}"
-        
-        logging.info(f"🎯 MODELO SELECCIONADO: {chosen_model}")
-        CACHED_MODEL_URL = final_url
-        return final_url
-
-    except Exception as e:
-        logging.error(f"Error fatal buscando modelos: {e}")
+        # chosen viene como "models/gemini-..."
+        url = f"{BASE_URL}/{chosen}:generateContent?key={GOOGLE_API_KEY}"
+        CACHED_MODEL_URL = url
+        return url
+    except:
         return f"{BASE_URL}/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
 
-# --- PASO 2: CONOCIMIENTO ---
+# --- CONOCIMIENTO ---
 def load_knowledge():
     filename = "knowledge_base.json"
-    base_prompt = """
-    ERES SIVIA.
-    1. Usa la Búsqueda de Google (tools) para datos actuales.
-    2. Tus respuestas deben ser EXTENSAS y COMPLETAS.
-    3. NO uses Wikipedia.
-    4. Si preguntan quién eres, usa el JSON adjunto.
-    """
-    json_content = ""
+    base = """ERES SIVIA.
+    1. Usa la herramienta de búsqueda para datos actuales.
+    2. Respuestas LARGAS y detalladas.
+    3. NO Wikipedia.
+    4. Usa el JSON para datos internos."""
+    
+    json_txt = ""
     if os.path.exists(filename):
         try:
             with open(filename, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                json_content = json.dumps(data, ensure_ascii=False)
+                json_txt = json.dumps(json.load(f), ensure_ascii=False)
         except: pass
-    
-    return f"{base_prompt}\nDATA:{json_content}"
+    return f"{base}\nDATOS INTERNOS:{json_txt}"
 
-# --- PASO 3: LLAMADA A LA API ---
+# --- LLAMADA A LA API (Con Fallback) ---
 def call_gemini(text, image_b64=None):
-    if not GOOGLE_API_KEY: return "Error: Sin API Key."
+    if not GOOGLE_API_KEY: return "Falta API Key."
     
-    # Obtenemos la URL dinámica
     url = get_working_url()
-    
     headers = {"Content-Type": "application/json"}
+    
+    # Construcción de partes
     parts = []
     if image_b64:
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
     parts.append({"text": text})
 
-    payload = {
+    system_instr = {"parts": [{"text": load_knowledge()}]}
+
+    # INTENTO 1: CON BÚSQUEDA (Sintaxis Nueva Simplificada)
+    payload_with_search = {
         "contents": [{"parts": parts}],
-        "system_instruction": {"parts": [{"text": load_knowledge()}]},
-        # CONFIGURACIÓN DE BÚSQUEDA WEB (CORREGIDA)
-        "tools": [{
-            "googleSearchRetrieval": {
-                "dynamicRetrievalConfig": {
-                    "mode": "MODE_DYNAMIC", 
-                    "dynamicThreshold": 0.6
-                }
-            }
-        }]
+        "system_instruction": system_instr,
+        "tools": [
+            # ESTO ES LO QUE PEDÍA EL ERROR 400:
+            {"google_search": {}} 
+        ]
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload)
+        logging.info("➡️ Intentando con Google Search...")
+        response = requests.post(url, headers=headers, json=payload_with_search)
         
         if response.status_code == 200:
-            try:
-                # Extracción robusta de texto
-                return response.json()['candidates'][0]['content']['parts'][0]['text']
-            except:
-                return "Google respondió pero no generó texto (posiblemente solo buscó)."
+            return parse_response(response.json())
+        
+        # SI FALLA LA BÚSQUEDA (Error 400 u otro), REINTENTAMOS SIN ELLA
+        logging.warning(f"⚠️ Falló búsqueda ({response.status_code}). Reintentando modo simple.")
+        
+        payload_simple = {
+            "contents": [{"parts": parts}],
+            "system_instruction": system_instr
+            # Sin tools
+        }
+        
+        response_retry = requests.post(url, headers=headers, json=payload_simple)
+        if response_retry.status_code == 200:
+            return parse_response(response_retry.json()) + "\n(Nota: No pude acceder a internet, te respondo con mi base interna)."
         else:
-            # Si falla, borramos caché por si el modelo cambió
-            global CACHED_MODEL_URL
-            CACHED_MODEL_URL = None
-            return f"⚠️ Error Google ({response.status_code}): {response.text}"
-    except Exception as e:
-        return f"Error conexión: {e}"
+            return f"Error Final ({response_retry.status_code}): {response_retry.text}"
 
-# --- PASO 4: APP FLASK ---
+    except Exception as e:
+        return f"Error de conexión: {e}"
+
+def parse_response(data):
+    try:
+        cand = data['candidates'][0]
+        # Verificar si hay texto
+        if 'content' in cand and 'parts' in cand['content']:
+            return cand['content']['parts'][0]['text']
+        # A veces la respuesta está en metadata si solo buscó
+        return "He procesado la información pero Google no generó texto. Intenta reformular."
+    except:
+        return "Respuesta ilegible de Google."
+
+# --- APP ---
 app = Flask(__name__)
 CORS(app)
 
@@ -139,31 +133,30 @@ def handle_chat():
     data = request.json
     q = data.get("question", "")
     img = data.get("image")
-    text_lower = q.lower()
+    q_low = q.lower()
 
-    # Imágenes / Video
+    # Multimedia (Pollinations)
     vid_keys = ["genera un video", "crea un video", "haz un video"]
     img_keys = ["genera una imagen", "dibuja", "foto de"]
 
-    if any(k in text_lower for k in vid_keys):
-        p = text_lower
+    if any(k in q_low for k in vid_keys):
+        p = q_low
         for k in vid_keys: p = p.replace(k, "")
         url = f"https://image.pollinations.ai/prompt/cinematic%20shot%20{p.strip().replace(' ','%20')}?width=1920&height=1080&nologo=true&model=flux"
-        return jsonify({"answer": f"🎥 Concepto de video: {url}"})
+        return jsonify({"answer": f"🎥 Concepto: {url}"})
 
-    if any(k in text_lower for k in img_keys):
-        p = text_lower
+    if any(k in q_low for k in img_keys):
+        p = q_low
         for k in img_keys: p = p.replace(k, "")
         url = f"https://image.pollinations.ai/prompt/{p.strip().replace(' ','%20')}?width=1024&height=1024&nologo=true"
         return jsonify({"answer": f"🎨 Imagen: {url}"})
 
-    # Chat Inteligente
+    # Texto
     ans = call_gemini(q, img)
     return jsonify({"answer": ans})
 
 @app.route("/")
-def home(): return "SIVIA Auto-Detect Online"
+def home(): return "SIVIA Online (Retry Mode)"
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
