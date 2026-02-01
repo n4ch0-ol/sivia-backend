@@ -6,3 +6,4 @@ flask-cors
 requests
 beautifulsoup4
 PyJWT
+Pillow
