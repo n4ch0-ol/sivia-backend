@@ -16,34 +16,52 @@ CORS(app)
 # Configurar API Key
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
-    print("ERROR: No se encontró la GOOGLE_API_KEY")
+    print("ERROR FATAL: No se encontró la GOOGLE_API_KEY")
     
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# --- DIAGNÓSTICO: VER QUÉ MODELOS HAY DISPONIBLES ---
-print("--- BUSCANDO MODELOS DISPONIBLES ---")
-try:
-    available_models = []
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            print(f"Modelo encontrado: {m.name}")
-            available_models.append(m.name)
-except Exception as e:
-    print(f"Error listando modelos: {e}")
-print("----------------------------------------")
+# --- SISTEMA DE AUTO-DETECCIÓN DE MODELO ---
+# Esto evita el error 404. El código busca un modelo que SÍ exista.
+def get_best_model():
+    print("--- BUSCANDO MODELOS DISPONIBLES ---")
+    valid_models = []
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                valid_models.append(m.name)
+                print(f"Disponible: {m.name}")
+    except Exception as e:
+        print(f"Error listando modelos: {e}")
+        # Si falla el listado, intentamos el clásico a ciegas
+        return "models/gemini-pro"
 
-# --- INSTRUCCIÓN PARA IMÁGENES ---
+    # Preferencias: Intentamos buscar estos en orden
+    preferences = ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-pro"]
+    
+    for pref in preferences:
+        if pref in valid_models:
+            return pref
+    
+    # Si no encuentra los preferidos, usa el primero que encontró
+    if valid_models:
+        return valid_models[0]
+    
+    return "models/gemini-pro" # Fallback final
+
+# ELEGIMOS EL MODELO
+MODEL_NAME = get_best_model()
+print(f"--- SIVIA USARÁ EL MODELO: {MODEL_NAME} ---")
+
+# --- INSTRUCCIÓN SIVIA ---
 SYSTEM_INSTRUCTION = """
 Eres SIVIA, una IA asistente útil y amable en español.
 
-SI EL USUARIO PIDE UNA IMAGEN:
-Genera un enlace Markdown a Pollinations.
-Ejemplo: ![Imagen](https://image.pollinations.ai/prompt/{descripcion_ingles}?width=1024&height=1024&nologos=true)
+INSTRUCCIÓN DE IMÁGENES:
+Si el usuario pide crear/dibujar una imagen, NO digas que no puedes.
+Responde con este formato Markdown exacto:
+![Imagen Generada](https://image.pollinations.ai/prompt/{descripcion_en_ingles}?width=1024&height=1024&nologos=true)
+(Traduce el prompt del usuario al inglés para la URL).
 """
-
-# INTENTAMOS USAR EL NOMBRE MÁS ESTABLE
-# Si falla, miraremos los logs para ver cuál está disponible
-MODEL_NAME = "gemini-1.5-flash-latest" 
 
 generation_config = {
     "temperature": 0.7,
@@ -51,59 +69,46 @@ generation_config = {
     "max_output_tokens": 8192,
 }
 
-# Variable global para el modelo
-model = None
-
-try:
-    model = genai.GenerativeModel(
-        model_name=MODEL_NAME,
-        generation_config=generation_config,
-        system_instruction=SYSTEM_INSTRUCTION
-    )
-    print(f"--- SIVIA LISTA USANDO: {MODEL_NAME} ---")
-except Exception as e:
-    print(f"--- ERROR INICIALIZANDO {MODEL_NAME}: {e} ---")
-    print("Intentando fallback a 'gemini-pro'...")
-    try:
-        model = genai.GenerativeModel("gemini-pro") # Fallback de emergencia
-        print("--- FALLBACK A GEMINI-PRO EXITOSO ---")
-    except Exception as e2:
-         print(f"--- ERROR FATAL: {e2} ---")
+# Inicializar Modelo
+model = genai.GenerativeModel(
+    model_name=MODEL_NAME,
+    generation_config=generation_config,
+    system_instruction=SYSTEM_INSTRUCTION
+)
 
 @app.route('/', methods=['GET'])
 def home():
-    return "SIVIA Backend Running"
+    return f"SIVIA Backend Running using {MODEL_NAME}"
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    global model
     try:
-        if not model:
-            return jsonify({"answer": "Error: El modelo IA no está cargado."}), 500
-
         data = request.json
         user_message = data.get("question")
         image_data = data.get("image")
 
         response_text = ""
 
-        # CASO CON IMAGEN
         if image_data:
-            image_bytes = base64.b64decode(image_data)
-            img = PIL.Image.open(io.BytesIO(image_bytes))
-            response = model.generate_content([user_message, img])
-            response_text = response.text
-        
-        # CASO SOLO TEXTO
+            # Caso con Imagen
+            try:
+                image_bytes = base64.b64decode(image_data)
+                img = PIL.Image.open(io.BytesIO(image_bytes))
+                response = model.generate_content([user_message, img])
+                response_text = response.text
+            except Exception as img_error:
+                response_text = "Recibí la imagen, pero hubo un error procesándola. Intenta solo texto."
+                print(f"Error imagen: {img_error}")
         else:
+            # Caso solo Texto
             response = model.generate_content(user_message)
             response_text = response.text
 
         return jsonify({"answer": response_text})
 
     except Exception as e:
-        print(f"ERROR EN CHAT: {e}")
-        return jsonify({"answer": f"Ocurrió un error en el servidor: {str(e)}"}), 500
+        print(f"ERROR GENERAL: {e}")
+        return jsonify({"answer": "Lo siento, estoy teniendo un problema de conexión con mi cerebro (API Error)."}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
