@@ -1,162 +1,89 @@
 import os
-import json
-import logging
-import requests
-from dotenv import load_dotenv
+import google.generativeai as genai
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
 
-# --- CONFIGURACIÓN ---
+# Cargar variables de entorno
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
+app = Flask(__name__)
+CORS(app)  # Permite que tu HTML hable con este servidor
+
+# Configurar API Key
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+genai.configure(api_key=GOOGLE_API_KEY)
 
-# Cache para no buscar el modelo todo el tiempo
-CACHED_MODEL_URL = None
+# --- AQUÍ ESTÁ EL TRUCO PARA LAS IMÁGENES ---
+# Le damos una "personalidad" e instrucciones estrictas
+SYSTEM_INSTRUCTION = """
+Eres SIVIA, una IA asistente avanzada y útil.
+Tus respuestas deben ser claras, amables y en español.
 
-# --- DETECTIVE DE MODELOS (Anti-404) ---
-def get_working_url():
-    global CACHED_MODEL_URL
-    if CACHED_MODEL_URL: return CACHED_MODEL_URL
+IMPORTANTE - GENERACIÓN DE IMÁGENES:
+Si el usuario te pide "crear", "generar", "dibujar" o "hacer" una imagen, foto o dibujo:
+1. NO digas que eres un modelo de lenguaje y que no puedes.
+2. SÍ PUEDES hacerlo generando un enlace especial.
+3. Para generar la imagen, responde EXCLUSIVAMENTE con este formato de enlace Markdown:
+   ![Imagen generada](https://image.pollinations.ai/prompt/{descripcion_en_ingles}?width=1024&height=1024&nologos=true)
+   
+   (Debes traducir la petición del usuario a inglés para ponerla dentro de {descripcion_en_ingles}).
 
+Ejemplo:
+Usuario: "Dibuja un gato futurista neon"
+Tú: "Aquí tienes tu imagen: ![Gato](https://image.pollinations.ai/prompt/futuristic%20neon%20cat?width=1024&height=1024&nologos=true)"
+"""
+
+# Configuración del modelo con las instrucciones
+generation_config = {
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "top_k": 40,
+    "max_output_tokens": 8192,
+}
+
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    generation_config=generation_config,
+    system_instruction=SYSTEM_INSTRUCTION # <--- Esto inyecta la instrucción
+)
+
+chat_session = model.start_chat(history=[])
+
+@app.route('/chat', methods=['POST'])
+def chat():
     try:
-        response = requests.get(f"{BASE_URL}/models?key={GOOGLE_API_KEY}")
-        data = response.json()
-        
-        if "models" not in data:
-            # URL por defecto si falla el listado
-            return f"{BASE_URL}/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
+        data = request.json
+        user_message = data.get("question")
+        image_data = data.get("image") # Base64 si el usuario sube foto
 
-        # Buscamos Gemini 1.5 Flash o Pro
-        candidates = [m["name"] for m in data["models"] if "generateContent" in m.get("supportedGenerationMethods", [])]
-        logging.info(f"Modelos: {candidates}")
+        response_text = ""
 
-        chosen = None
-        for m in candidates:
-            if "gemini-1.5-flash" in m: 
-                chosen = m; break
-        if not chosen: chosen = candidates[0]
+        # CASO 1: El usuario manda texto + imagen
+        if image_data:
+            import PIL.Image
+            import io
+            import base64
+            
+            # Decodificar imagen
+            image_bytes = base64.b64decode(image_data)
+            img = PIL.Image.open(io.BytesIO(image_bytes))
+            
+            # Enviar a Gemini Vision
+            response = model.generate_content([user_message, img])
+            response_text = response.text
 
-        # chosen viene como "models/gemini-..."
-        url = f"{BASE_URL}/{chosen}:generateContent?key={GOOGLE_API_KEY}"
-        CACHED_MODEL_URL = url
-        return url
-    except:
-        return f"{BASE_URL}/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
-
-# --- CONOCIMIENTO ---
-def load_knowledge():
-    filename = "knowledge_base.json"
-    base = """ERES SIVIA.
-    1. Usa la herramienta de búsqueda para datos actuales.
-    2. Respuestas LARGAS y detalladas.
-    3. NO Wikipedia.
-    4. Usa el JSON para datos internos."""
-    
-    json_txt = ""
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding="utf-8") as f:
-                json_txt = json.dumps(json.load(f), ensure_ascii=False)
-        except: pass
-    return f"{base}\nDATOS INTERNOS:{json_txt}"
-
-# --- LLAMADA A LA API (Con Fallback) ---
-def call_gemini(text, image_b64=None):
-    if not GOOGLE_API_KEY: return "Falta API Key."
-    
-    url = get_working_url()
-    headers = {"Content-Type": "application/json"}
-    
-    # Construcción de partes
-    parts = []
-    if image_b64:
-        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
-    parts.append({"text": text})
-
-    system_instr = {"parts": [{"text": load_knowledge()}]}
-
-    # INTENTO 1: CON BÚSQUEDA (Sintaxis Nueva Simplificada)
-    payload_with_search = {
-        "contents": [{"parts": parts}],
-        "system_instruction": system_instr,
-        "tools": [
-            # ESTO ES LO QUE PEDÍA EL ERROR 400:
-            {"google_search": {}} 
-        ]
-    }
-
-    try:
-        logging.info("➡️ Intentando con Google Search...")
-        response = requests.post(url, headers=headers, json=payload_with_search)
-        
-        if response.status_code == 200:
-            return parse_response(response.json())
-        
-        # SI FALLA LA BÚSQUEDA (Error 400 u otro), REINTENTAMOS SIN ELLA
-        logging.warning(f"⚠️ Falló búsqueda ({response.status_code}). Reintentando modo simple.")
-        
-        payload_simple = {
-            "contents": [{"parts": parts}],
-            "system_instruction": system_instr
-            # Sin tools
-        }
-        
-        response_retry = requests.post(url, headers=headers, json=payload_simple)
-        if response_retry.status_code == 200:
-            return parse_response(response_retry.json()) + "\n(Nota: No pude acceder a internet, te respondo con mi base interna)."
+        # CASO 2: Solo texto (aquí es donde puede pedir generar imagen)
         else:
-            return f"Error Final ({response_retry.status_code}): {response_retry.text}"
+            response = chat_session.send_message(user_message)
+            response_text = response.text
+
+        return jsonify({"answer": response_text})
 
     except Exception as e:
-        return f"Error de conexión: {e}"
+        print(f"Error: {e}")
+        return jsonify({"answer": "Lo siento, tuve un error interno."}), 500
 
-def parse_response(data):
-    try:
-        cand = data['candidates'][0]
-        # Verificar si hay texto
-        if 'content' in cand and 'parts' in cand['content']:
-            return cand['content']['parts'][0]['text']
-        # A veces la respuesta está en metadata si solo buscó
-        return "He procesado la información pero Google no generó texto. Intenta reformular."
-    except:
-        return "Respuesta ilegible de Google."
-
-# --- APP ---
-app = Flask(__name__)
-CORS(app)
-
-@app.route("/chat", methods=['POST'])
-def handle_chat():
-    data = request.json
-    q = data.get("question", "")
-    img = data.get("image")
-    q_low = q.lower()
-
-    # Multimedia (Pollinations)
-    vid_keys = ["genera un video", "crea un video", "haz un video"]
-    img_keys = ["genera una imagen", "dibuja", "foto de"]
-
-    if any(k in q_low for k in vid_keys):
-        p = q_low
-        for k in vid_keys: p = p.replace(k, "")
-        url = f"https://image.pollinations.ai/prompt/cinematic%20shot%20{p.strip().replace(' ','%20')}?width=1920&height=1080&nologo=true&model=flux"
-        return jsonify({"answer": f"🎥 Concepto: {url}"})
-
-    if any(k in q_low for k in img_keys):
-        p = q_low
-        for k in img_keys: p = p.replace(k, "")
-        url = f"https://image.pollinations.ai/prompt/{p.strip().replace(' ','%20')}?width=1024&height=1024&nologo=true"
-        return jsonify({"answer": f"🎨 Imagen: {url}"})
-
-    # Texto
-    ans = call_gemini(q, img)
-    return jsonify({"answer": ans})
-
-@app.route("/")
-def home(): return "SIVIA Online (Retry Mode)"
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
