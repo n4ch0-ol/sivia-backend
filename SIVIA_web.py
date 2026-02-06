@@ -9,24 +9,37 @@ import io
 import base64
 
 
+import os
+import json
+import google.generativeai as genai
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from dotenv import load_dotenv
+import PIL.Image
+import io
+import base64
+
+# 1. CARGAR VARIABLES DE ENTORNO (Lo primero de todo)
+load_dotenv()
+
+app = Flask(__name__)
+CORS(app)
+
+# 2. CONFIGURAR API KEY (Necesario antes de usar herramientas)
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    print("ERROR FATAL: No se encontró la GOOGLE_API_KEY")
+genai.configure(api_key=GOOGLE_API_KEY)
+
 # ==========================================
 # 3. CONFIGURACIÓN DE HERRAMIENTAS (CORREGIDO)
 # ==========================================
-# Usamos el objeto 'protos' directamente para evitar que Python se confunda
+# Definimos la herramienta con la sintaxis segura 'protos'
 tools_sivia = [
     genai.protos.Tool(
         google_search_retrieval=genai.protos.GoogleSearchRetrieval()
     )
 ]
-
-
-
-
-# Cargar variables de entorno
-load_dotenv()
-
-app = Flask(__name__)
-CORS(app)
 
 # Configurar API Key
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -161,4 +174,5 @@ def chat():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+
 
