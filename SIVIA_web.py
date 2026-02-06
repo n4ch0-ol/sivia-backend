@@ -25,45 +25,42 @@ if not GOOGLE_API_KEY:
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # ==============================================================================
-#  FUNCIÓN DE AUTO-SELECCIÓN DE MODELO (TU PEDIDO)
+#  FUNCIÓN DE AUTO-SELECCIÓN DE MODELO (CORREGIDA Y BLINDADA)
 # ==============================================================================
 def select_optimal_model():
-    """
-    Busca en la lista de modelos disponibles uno que cumpla:
-    1. Contenga 'gemini'
-    2. Contenga '1.5' (para evitar el 2.0 que da error de cuota)
-    3. Contenga 'flash' (para velocidad)
-    """
     print("--- 🔍 ANALIZANDO MODELOS DISPONIBLES... ---")
+    selected_model = "gemini-1.5-flash" # Valor por defecto SEGURO (sin models/)
+
     try:
-        # Obtenemos todos los modelos de la cuenta
+        # Obtenemos todos los modelos
         all_models = list(client.models.list())
         
         for m in all_models:
-            # El nombre suele venir como 'models/gemini-1.5-flash-001'
-            name = m.name
-            name_lower = name.lower()
+            # El nombre crudo suele ser 'models/gemini-1.5-flash-001'
+            raw_name = m.name
+            name_lower = raw_name.lower()
             
-            # TU LÓGICA DE FILTRADO:
+            # TU LÓGICA DE FILTRADO (1.5 + gemini + flash)
             if "gemini" in name_lower and "1.5" in name_lower and "flash" in name_lower:
-                
-                # IMPORTANTE: La nueva librería requiere el nombre SIN "models/"
-                # Ejemplo: transformar 'models/gemini-1.5-flash' -> 'gemini-1.5-flash'
-                clean_name = name.replace("models/", "")
-                
-                print(f"✅ MODELO ELEGIDO: {clean_name} (Origen: {name})")
-                return clean_name
+                selected_model = raw_name
+                print(f"✨ Encontrado candidato: {selected_model}")
+                break # Nos quedamos con el primero que coincida
         
-        # Si termina el bucle y no encuentra nada, usamos fallback
-        print("⚠️ No se encontró coincidencia exacta. Usando default.")
-        return "gemini-1.5-flash"
-
     except Exception as e:
-        print(f"❌ Error al listar modelos ({e}). Usando default seguro.")
-        return "gemini-1.5-flash"
+        print(f"⚠️ Error listando modelos ({e}). Usando default: {selected_model}")
+
+    # === LIMPIEZA BRUTAL DEL NOMBRE (CRUCIAL) ===
+    # La nueva API odia el prefijo "models/". Lo cortamos sí o sí.
+    if selected_model.startswith("models/"):
+        clean_name = selected_model.split("/")[-1] # Toma solo lo que está después de la barra
+        print(f"✂️  Nombre corregido: '{selected_model}' -> '{clean_name}'")
+        return clean_name
+    
+    return selected_model
 
 # EJECUTAMOS LA SELECCIÓN
 MODEL_NAME = select_optimal_model()
+print(f"🚀 SIVIA USARÁ EL MODELO FINAL: '{MODEL_NAME}'")
 
 
 # 3. BASE DE DATOS (JSON)
@@ -71,10 +68,8 @@ try:
     with open('knowledge_base.json', 'r', encoding='utf-8') as file:
         data = json.load(file)
         database_content = json.dumps(data, indent=2, ensure_ascii=False)
-        print("📚 Base de datos cargada.")
 except:
     database_content = "No hay datos específicos disponibles."
-    print("⚠️ No se encontró knowledge_base.json")
 
 # 4. INSTRUCCIONES DEL SISTEMA
 SYSTEM_INSTRUCTION = f"""
@@ -86,7 +81,7 @@ REGLA: Si la respuesta no está en los datos locales, USA GOOGLE SEARCH.
 
 @app.route('/', methods=['GET'])
 def home():
-    return f"SIVIA ONLINE - Running on: {MODEL_NAME}"
+    return f"SIVIA ONLINE - Model: {MODEL_NAME}"
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -95,19 +90,16 @@ def chat():
         user_msg = data.get("question")
         img_data = data.get("image")
         
-        # Configuramos la herramienta de búsqueda para esta petición
-        # (Se activa si el modelo necesita información externa)
+        # Herramienta de búsqueda
         tools_config = [types.Tool(google_search=types.GoogleSearch())]
         
         response_text = ""
 
         if img_data:
             # === CASO IMAGEN ===
-            # Procesamos base64 a imagen PIL
             image_bytes = base64.b64decode(img_data)
             img = PIL.Image.open(io.BytesIO(image_bytes))
             
-            # Enviamos al modelo (Normalmente search se deshabilita con imágenes en tiers bajos)
             response = client.models.generate_content(
                 model=MODEL_NAME,
                 contents=[user_msg, img],
@@ -125,26 +117,24 @@ def chat():
                 contents=user_msg,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
-                    tools=tools_config, # <--- Aquí activamos Google Search
+                    tools=tools_config,
                     temperature=0.4,
                     response_modalities=["TEXT"]
                 )
             )
             
-            # Extracción segura de la respuesta
             if response.text:
                 response_text = response.text
             elif response.candidates and response.candidates[0].content.parts:
-                # A veces la respuesta viene estructurada si usó herramientas
                 response_text = response.candidates[0].content.parts[0].text
             else:
-                response_text = "Lo siento, intenté buscar eso pero no pude generar una respuesta coherente."
+                response_text = "No pude generar respuesta."
 
         return jsonify({"answer": response_text})
 
     except Exception as e:
         print(f"❌ ERROR EN CHAT: {e}")
-        return jsonify({"answer": f"Hubo un error interno: {str(e)}"}), 500
+        return jsonify({"answer": f"Error del sistema: {str(e)}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
