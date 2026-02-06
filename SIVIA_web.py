@@ -1,10 +1,12 @@
 import os
 import json
-import requests
-import base64
+import google.generativeai as genai
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+import PIL.Image
+import io
+import base64
 
 # 1. CARGA DE VARIABLES
 load_dotenv()
@@ -12,19 +14,13 @@ app = Flask(__name__)
 CORS(app)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    print("❌ ERROR: Falta la API KEY")
 
-# 2. CONFIGURACIÓN MANUAL EXACTA
-# Sacado de TU propia lista: 'models/gemini-2.0-flash'
-# Este modelo es estable y tiene capa gratuita generosa.
-MODEL_NAME = "models/gemini-2.0-flash" 
+# Configuración de Google
+genai.configure(api_key=GOOGLE_API_KEY)
 
-# Construimos la URL con precisión quirúrgica
-# La URL final quedará: .../v1beta/models/gemini-2.0-flash:generateContent
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
-
-print(f"🚀 SIVIA CONSTANTE: Usando {MODEL_NAME}")
-
-# 3. BASE DE DATOS
+# 2. BASE DE DATOS LOCAL
 try:
     with open('knowledge_base.json', 'r', encoding='utf-8') as file:
         data = json.load(file)
@@ -32,65 +28,60 @@ try:
 except:
     database_content = "No hay datos específicos."
 
+# 3. INSTRUCCIONES
 SYSTEM_INSTRUCTION = f"""
 Eres SIVIA, la IA del Centro de Estudiantes.
 --- DATOS LOCALES ---
 {database_content}
-REGLA: Responde de forma útil y breve.
+REGLA: Responde basándote en los datos locales. Si no sabes, dilo amablemente.
 """
+
+# 4. MODELO (Versión Estándar)
+# Usamos 'gemini-1.5-flash' que es el estándar gratuito.
+# Si este te falla, cambia el nombre a "gemini-2.0-flash" que vimos en tu lista.
+try:
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        system_instruction=SYSTEM_INSTRUCTION
+    )
+    print("✅ Modelo SIVIA cargado correctamente.")
+except Exception as e:
+    print(f"❌ Error cargando modelo: {e}")
+    model = None
 
 @app.route('/', methods=['GET'])
 def home():
-    return f"SIVIA ONLINE - {MODEL_NAME}"
+    return "SIVIA (Classic) - ONLINE"
 
 @app.route('/chat', methods=['POST'])
 def chat():
+    if not model:
+        return jsonify({"answer": "Error: El modelo no está activo."}), 500
+
     try:
         data = request.json
         user_msg = data.get("question")
         img_data = data.get("image")
 
-        parts = []
-        full_text = f"{SYSTEM_INSTRUCTION}\n\nUsuario: {user_msg}"
-        
         if img_data:
-            parts.append({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": img_data
-                }
-            })
-        
-        parts.append({"text": full_text})
-
-        payload = {
-            "contents": [{"parts": parts}]
-        }
-
-        # ENVÍO HTTP
-        print(f"📤 Enviando petición a {MODEL_NAME}...")
-        response = requests.post(
-            API_URL, 
-            headers={'Content-Type': 'application/json'},
-            json=payload,
-            timeout=30
-        )
-
-        if response.status_code != 200:
-            print(f"❌ Error Google: {response.text}")
-            return jsonify({"answer": f"Error Google ({response.status_code}): {response.text}"}), 500
-
-        result = response.json()
-        
-        try:
-            answer = result['candidates'][0]['content']['parts'][0]['text']
-            return jsonify({"answer": answer})
-        except:
-            return jsonify({"answer": "Google respondió pero no pude leer el texto."})
+            # === CASO CON IMAGEN ===
+            try:
+                image_bytes = base64.b64decode(img_data)
+                img = PIL.Image.open(io.BytesIO(image_bytes))
+                response = model.generate_content([user_msg, img])
+                return jsonify({"answer": response.text})
+            except Exception as e:
+                print(f"Error imagen: {e}")
+                return jsonify({"answer": "Hubo un problema procesando la imagen."})
+            
+        else:
+            # === CASO SOLO TEXTO ===
+            response = model.generate_content(user_msg)
+            return jsonify({"answer": response.text})
 
     except Exception as e:
-        print(f"❌ ERROR INTERNO: {e}")
-        return jsonify({"answer": "Error interno del servidor."}), 500
+        print(f"❌ ERROR: {e}")
+        return jsonify({"answer": "Ocurrió un error al procesar tu mensaje."}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
