@@ -1,15 +1,12 @@
 import os
 import json
-import base64
-import io
+import google.generativeai as genai
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 import PIL.Image
-
-# Importamos la librería clásica y sus "Protos" (los objetos crudos)
-import google.generativeai as genai
-from google.generativeai import protos
+import io
+import base64
 
 # 1. CARGA DE VARIABLES
 load_dotenv()
@@ -20,7 +17,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     print("❌ ERROR: Falta la API KEY")
 
-# Configuramos la librería
+# Configuración básica
 genai.configure(api_key=GOOGLE_API_KEY)
 
 # 2. BASE DE DATOS
@@ -31,41 +28,57 @@ try:
 except:
     database_content = "No hay datos específicos."
 
-# 3. CONFIGURACIÓN DEL MODELO (A PRUEBA DE BOMBAS)
-MODEL_NAME = "gemini-1.5-flash"
-
+# 3. INSTRUCCIONES
 SYSTEM_INSTRUCTION = f"""
 Eres SIVIA, la IA del Centro de Estudiantes.
 --- DATOS LOCALES ---
 {database_content}
-REGLA: Si la respuesta no está en los datos locales, USA GOOGLE SEARCH.
+REGLA: Si la respuesta no está en los datos locales, intenta responder con tu conocimiento general.
 """
 
-# --- AQUÍ ESTÁ EL ARREGLO ---
-# En lugar de usar un diccionario que confunde al sistema, creamos el objeto Tool manualmente.
-# Esto obliga a la librería a aceptar la herramienta de búsqueda sin rechistar.
-try:
-    sivia_tools = [
-        protos.Tool(google_search=protos.GoogleSearch())
-    ]
-    print("✅ Herramienta Google Search configurada manualmente.")
-except Exception as e:
-    print(f"⚠️ Alerta: No se pudo cargar Google Search ({e}). Iniciando sin búsqueda.")
-    sivia_tools = None
+# 4. INICIALIZACIÓN DEL MODELO (A PRUEBA DE FALLOS)
+MODEL_NAME = "gemini-1.5-flash"
+model = None
 
-# Iniciamos el modelo
-model = genai.GenerativeModel(
-    model_name=MODEL_NAME,
-    system_instruction=SYSTEM_INSTRUCTION,
-    tools=sivia_tools
-)
+# Intento 1: Con Google Search activado
+try:
+    print("🔄 Intentando cargar modelo CON Google Search...")
+    # Sintaxis diccionario compatible con 0.8.3
+    tools_config = [{'google_search': {}}]
+    
+    model = genai.GenerativeModel(
+        model_name=MODEL_NAME,
+        system_instruction=SYSTEM_INSTRUCTION,
+        tools=tools_config
+    )
+    # Hacemos una prueba tonta para ver si explota
+    model._tools.to_proto() 
+    print("✅ Google Search activado correctamente.")
+
+except Exception as e:
+    print(f"⚠️ FALLÓ LA CARGA DE SEARCH ({e}).")
+    print("🔄 Cambiando a modo SOLO TEXTO/JSON para no detener el servidor.")
+    
+    # Intento 2: Sin herramientas (Esto NO puede fallar)
+    try:
+        model = genai.GenerativeModel(
+            model_name=MODEL_NAME,
+            system_instruction=SYSTEM_INSTRUCTION
+        )
+        print("✅ SIVIA iniciada en modo BÁSICO (Solo JSON + Chat).")
+    except Exception as e2:
+        print(f"❌ ERROR CRÍTICO FINAL: {e2}")
 
 @app.route('/', methods=['GET'])
 def home():
-    return "SIVIA (Classic Hardcoded) - ONLINE"
+    status = "CON BÚSQUEDA" if model and hasattr(model, '_tools') and model._tools else "SOLO JSON"
+    return f"SIVIA ONLINE - {status}"
 
 @app.route('/chat', methods=['POST'])
 def chat():
+    if not model:
+        return jsonify({"answer": "Error crítico: El modelo no pudo iniciarse."}), 500
+
     try:
         data = request.json
         user_msg = data.get("question")
@@ -73,31 +86,27 @@ def chat():
 
         if img_data:
             # === CASO IMAGEN ===
-            # Las imágenes a veces chocan con las tools en la versión gratuita.
-            # Generamos contenido directamente sin tools para asegurar que funcione.
             image_bytes = base64.b64decode(img_data)
             img = PIL.Image.open(io.BytesIO(image_bytes))
-            
+            # Para imágenes usamos el método directo sin tools para evitar conflictos
             response = model.generate_content([user_msg, img])
             return jsonify({"answer": response.text})
             
         else:
             # === CASO TEXTO ===
-            # Aquí usa las herramientas configuradas (Search)
             response = model.generate_content(user_msg)
             
-            # Extracción de respuesta a prueba de fallos
             if response.text:
                 return jsonify({"answer": response.text})
             elif response.candidates and response.candidates[0].content.parts:
-                part = response.candidates[0].content.parts[0]
-                return jsonify({"answer": part.text if part.text else "Encontré información pero no pude procesar el texto."})
+                return jsonify({"answer": response.candidates[0].content.parts[0].text})
             else:
-                return jsonify({"answer": "Lo siento, no pude generar una respuesta."})
+                return jsonify({"answer": "No pude generar una respuesta."})
 
     except Exception as e:
-        print(f"❌ ERROR: {e}")
-        return jsonify({"answer": "Error momentáneo en el servidor de IA."}), 500
+        print(f"❌ ERROR EN CHAT: {e}")
+        # Mensaje genérico para no asustar al usuario
+        return jsonify({"answer": "Tuve un pequeño error interno, ¿puedes reformular la pregunta?"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
