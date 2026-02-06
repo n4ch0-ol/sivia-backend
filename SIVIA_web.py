@@ -1,6 +1,6 @@
 import os
 import json
-import requests # <--- Usamos peticiones directas
+import requests
 import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -15,7 +15,60 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     print("❌ ERROR: Falta la API KEY")
 
-# 2. BASE DE DATOS
+# 2. FUNCIÓN DE AUTO-DESCUBRIMIENTO (SHERLOCK HOLMES)
+# Esta función busca el modelo real y construye la URL perfecta.
+def get_dynamic_model_url():
+    try:
+        print("🕵️  Consultando lista de modelos a Google...")
+        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GOOGLE_API_KEY}"
+        resp = requests.get(list_url)
+        
+        if resp.status_code != 200:
+            print(f"⚠️ Error listando modelos ({resp.status_code}). Usando fallback.")
+            return f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}", "gemini-1.5-flash (Fallback)"
+
+        data = resp.json()
+        models = data.get('models', [])
+        
+        # Buscamos el mejor candidato
+        chosen_model_name = ""
+        
+        # Prioridad 1: Gemini 1.5 Flash
+        for m in models:
+            if "gemini" in m['name'] and "1.5" in m['name'] and "flash" in m['name'] and "generateContent" in m['supportedGenerationMethods']:
+                chosen_model_name = m['name']
+                break
+        
+        # Prioridad 2: Gemini Pro (si no hay flash)
+        if not chosen_model_name:
+            for m in models:
+                if "gemini" in m['name'] and "pro" in m['name'] and "generateContent" in m['supportedGenerationMethods']:
+                    chosen_model_name = m['name']
+                    break
+        
+        # Prioridad 3: El primero que funcione
+        if not chosen_model_name and models:
+            chosen_model_name = models[0]['name']
+
+        if chosen_model_name:
+            print(f"✅ MODELO ENCONTRADO: {chosen_model_name}")
+            # TRUCO: El nombre ya viene como 'models/gemini-xyz'.
+            # La URL base es 'https://generativelanguage.googleapis.com/v1beta/'
+            # Solo concatenamos. NO agregamos 'models/' extra.
+            final_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model_name}:generateContent?key={GOOGLE_API_KEY}"
+            return final_url, chosen_model_name
+        else:
+            print("⚠️ No se encontraron modelos compatibles.")
+            return None, "Ninguno"
+
+    except Exception as e:
+        print(f"❌ Error en autodetección: {e}")
+        return f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}", "gemini-1.5-flash (Error)"
+
+# INICIALIZAMOS LA URL AL ARRANCAR
+ACTIVE_URL, MODEL_NAME_DISPLAY = get_dynamic_model_url()
+
+# 3. BASE DE DATOS
 try:
     with open('knowledge_base.json', 'r', encoding='utf-8') as file:
         data = json.load(file)
@@ -23,40 +76,33 @@ try:
 except:
     database_content = "No hay datos específicos."
 
-# 3. CONFIGURACIÓN MANUAL (SIN LIBRERÍAS)
-# Usamos la URL directa de la API v1beta.
-MODEL_NAME = "gemini-1.5-flash"
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
-
 SYSTEM_INSTRUCTION = f"""
 Eres SIVIA, la IA del Centro de Estudiantes.
 --- DATOS LOCALES ---
 {database_content}
-REGLA: Responde de forma útil y breve.
+REGLA: Responde de forma útil.
 """
 
 @app.route('/', methods=['GET'])
 def home():
-    return f"SIVIA (MODO HTTP DIRECTO) - ONLINE"
+    return f"SIVIA ONLINE - Usando: {MODEL_NAME_DISPLAY}"
 
 @app.route('/chat', methods=['POST'])
 def chat():
+    # Si por alguna razón la URL no se generó al inicio, intentamos de nuevo
+    global ACTIVE_URL
+    if not ACTIVE_URL:
+        ACTIVE_URL, _ = get_dynamic_model_url()
+
     try:
         data = request.json
         user_msg = data.get("question")
-        img_data = data.get("image") # Base64 string
+        img_data = data.get("image")
 
-        # Construimos el cuerpo del mensaje (JSON) A MANO
-        # Esto evita que ninguna librería meta la pata.
-        
         parts = []
+        # Prompt + Sistema
+        full_text = f"{SYSTEM_INSTRUCTION}\n\nUsuario: {user_msg}"
         
-        # 1. Instrucción del sistema (simulada como primer mensaje de usuario para simplificar en HTTP puro)
-        # Ojo: La API REST permite system_instruction, pero para asegurar compatibilidad máxima
-        # lo ponemos como contexto en el mensaje.
-        full_prompt = f"{SYSTEM_INSTRUCTION}\n\nPREGUNTA DEL USUARIO: {user_msg}"
-        
-        # 2. Si hay imagen, la agregamos
         if img_data:
             parts.append({
                 "inline_data": {
@@ -65,49 +111,35 @@ def chat():
                 }
             })
         
-        # 3. Agregamos el texto
-        parts.append({"text": full_prompt})
+        parts.append({"text": full_text})
 
-        # Payload final
         payload = {
-            "contents": [{
-                "parts": parts
-            }],
-            # Configuración de generación
-            "generationConfig": {
-                "temperature": 0.4
-            }
+            "contents": [{"parts": parts}]
         }
 
-        # === EL ENVÍO REAL ===
-        print("📤 Enviando petición HTTP directa a Google...")
+        # ENVÍO HTTP
         response = requests.post(
-            API_URL, 
+            ACTIVE_URL, 
             headers={'Content-Type': 'application/json'},
             json=payload,
-            timeout=30 # 30 segundos de espera máximo
+            timeout=30
         )
 
-        # Verificamos si Google respondió bien (Código 200)
         if response.status_code != 200:
-            print(f"❌ ERROR HTTP {response.status_code}: {response.text}")
-            return jsonify({"answer": f"Error de Google ({response.status_code}): {response.text}"}), 500
+            return jsonify({"answer": f"Error Google ({response.status_code}): {response.text}"}), 500
 
-        # Procesamos la respuesta JSON pura
-        result_json = response.json()
+        result = response.json()
         
+        # Extracción segura
         try:
-            # Intentamos sacar el texto
-            answer = result_json['candidates'][0]['content']['parts'][0]['text']
+            answer = result['candidates'][0]['content']['parts'][0]['text']
             return jsonify({"answer": answer})
-        except (KeyError, IndexError):
-            # Si la estructura es rara (ej. filtro de seguridad)
-            print(f"⚠️ Respuesta inesperada: {result_json}")
-            return jsonify({"answer": "No pude generar una respuesta (posible filtro de seguridad)."}), 200
+        except:
+            return jsonify({"answer": "No pude leer la respuesta de Google."})
 
     except Exception as e:
-        print(f"❌ ERROR INTERNO: {e}")
-        return jsonify({"answer": f"Error del servidor: {str(e)}"}), 500
+        print(f"❌ ERROR: {e}")
+        return jsonify({"answer": "Error interno del servidor."}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
