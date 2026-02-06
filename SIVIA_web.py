@@ -34,7 +34,7 @@ except:
 
 # 4. CONFIGURACIÓN DEL MODELO Y HERRAMIENTAS
 # Usamos el modelo 2.0 Flash que es nativo de esta nueva librería y vuela.
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-1.5-flash"
 
 SYSTEM_INSTRUCTION = f"""
 Eres SIVIA.
@@ -108,3 +108,4 @@ def chat():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+
