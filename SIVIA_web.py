@@ -8,17 +8,6 @@ import PIL.Image
 import io
 import base64
 
-
-import os
-import json
-import google.generativeai as genai
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from dotenv import load_dotenv
-import PIL.Image
-import io
-import base64
-
 # 1. CARGAR VARIABLES DE ENTORNO (Lo primero de todo)
 load_dotenv()
 
@@ -174,5 +163,6 @@ def chat():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+
 
 
