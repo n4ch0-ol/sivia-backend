@@ -25,9 +25,7 @@ genai.configure(api_key=GOOGLE_API_KEY)
 # ==========================================
 # Definimos la herramienta con la sintaxis segura 'protos'
 tools_sivia = [
-    genai.protos.Tool(
-        google_search_retrieval=genai.protos.GoogleSearchRetrieval()
-    )
+    {"google_search": {}}
 ]
 
 # Configurar API Key
@@ -163,6 +161,7 @@ def chat():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+
 
 
 
