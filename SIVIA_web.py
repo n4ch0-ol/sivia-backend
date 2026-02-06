@@ -8,6 +8,20 @@ import PIL.Image
 import io
 import base64
 
+
+# ==========================================
+# 3. CONFIGURACIÓN DE HERRAMIENTAS (CORREGIDO)
+# ==========================================
+# Usamos el objeto 'protos' directamente para evitar que Python se confunda
+tools_sivia = [
+    genai.protos.Tool(
+        google_search_retrieval=genai.protos.GoogleSearchRetrieval()
+    )
+]
+
+
+
+
 # Cargar variables de entorno
 load_dotenv()
 
@@ -147,3 +161,4 @@ def chat():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+
