@@ -1,6 +1,6 @@
+google-generativeai
 flask
 flask-cors
 python-dotenv
 pillow
 gunicorn
-requests
