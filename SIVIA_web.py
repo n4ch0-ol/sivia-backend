@@ -21,47 +21,17 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     print("❌ ERROR FATAL: No se encontró la GOOGLE_API_KEY")
 
-# Instanciamos el cliente
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # ==============================================================================
-#  FUNCIÓN DE AUTO-SELECCIÓN DE MODELO (CORREGIDA Y BLINDADA)
+#  CONFIGURACIÓN DEL MODELO - SOLUCIÓN DEFINITIVA
 # ==============================================================================
-def select_optimal_model():
-    print("--- 🔍 ANALIZANDO MODELOS DISPONIBLES... ---")
-    selected_model = "gemini-1.5-flash" # Valor por defecto SEGURO (sin models/)
+# NO usamos autodetección.
+# Usamos el ID EXACTO de la versión estable 001.
+# Esto evita que la librería se confunda con los alias.
+MODEL_NAME = "gemini-1.5-flash-001" 
 
-    try:
-        # Obtenemos todos los modelos
-        all_models = list(client.models.list())
-        
-        for m in all_models:
-            # El nombre crudo suele ser 'models/gemini-1.5-flash-001'
-            raw_name = m.name
-            name_lower = raw_name.lower()
-            
-            # TU LÓGICA DE FILTRADO (1.5 + gemini + flash)
-            if "gemini" in name_lower and "1.5" in name_lower and "flash" in name_lower:
-                selected_model = raw_name
-                print(f"✨ Encontrado candidato: {selected_model}")
-                break # Nos quedamos con el primero que coincida
-        
-    except Exception as e:
-        print(f"⚠️ Error listando modelos ({e}). Usando default: {selected_model}")
-
-    # === LIMPIEZA BRUTAL DEL NOMBRE (CRUCIAL) ===
-    # La nueva API odia el prefijo "models/". Lo cortamos sí o sí.
-    if selected_model.startswith("models/"):
-        clean_name = selected_model.split("/")[-1] # Toma solo lo que está después de la barra
-        print(f"✂️  Nombre corregido: '{selected_model}' -> '{clean_name}'")
-        return clean_name
-    
-    return selected_model
-
-# EJECUTAMOS LA SELECCIÓN
-MODEL_NAME = select_optimal_model()
-print(f"🚀 SIVIA USARÁ EL MODELO FINAL: '{MODEL_NAME}'")
-
+print(f"🚀 SIVIA INICIADA. Usando ID específico: {MODEL_NAME}")
 
 # 3. BASE DE DATOS (JSON)
 try:
@@ -71,7 +41,7 @@ try:
 except:
     database_content = "No hay datos específicos disponibles."
 
-# 4. INSTRUCCIONES DEL SISTEMA
+# 4. INSTRUCCIONES
 SYSTEM_INSTRUCTION = f"""
 Eres SIVIA, la IA del Centro de Estudiantes.
 --- DATOS LOCALES ---
@@ -81,7 +51,7 @@ REGLA: Si la respuesta no está en los datos locales, USA GOOGLE SEARCH.
 
 @app.route('/', methods=['GET'])
 def home():
-    return f"SIVIA ONLINE - Model: {MODEL_NAME}"
+    return f"SIVIA ONLINE - {MODEL_NAME}"
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -90,7 +60,7 @@ def chat():
         user_msg = data.get("question")
         img_data = data.get("image")
         
-        # Herramienta de búsqueda
+        # Herramienta de búsqueda activada
         tools_config = [types.Tool(google_search=types.GoogleSearch())]
         
         response_text = ""
@@ -100,6 +70,7 @@ def chat():
             image_bytes = base64.b64decode(img_data)
             img = PIL.Image.open(io.BytesIO(image_bytes))
             
+            # Enrutamos la llamada al modelo
             response = client.models.generate_content(
                 model=MODEL_NAME,
                 contents=[user_msg, img],
@@ -119,22 +90,28 @@ def chat():
                     system_instruction=SYSTEM_INSTRUCTION,
                     tools=tools_config,
                     temperature=0.4,
-                    response_modalities=["TEXT"]
+                    response_modalities=["TEXT"] # Forzamos respuesta texto
                 )
             )
             
+            # Lógica de extracción de respuesta
             if response.text:
                 response_text = response.text
             elif response.candidates and response.candidates[0].content.parts:
-                response_text = response.candidates[0].content.parts[0].text
+                part = response.candidates[0].content.parts[0]
+                if part.text:
+                    response_text = part.text
+                else:
+                    response_text = "He encontrado información pero no puedo mostrarla en este formato."
             else:
-                response_text = "No pude generar respuesta."
+                response_text = "Lo siento, hubo un problema generando la respuesta."
 
         return jsonify({"answer": response_text})
 
     except Exception as e:
-        print(f"❌ ERROR EN CHAT: {e}")
-        return jsonify({"answer": f"Error del sistema: {str(e)}"}), 500
+        print(f"❌ ERROR CRÍTICO EN CHAT: {e}")
+        # Mensaje de error limpio para el frontend
+        return jsonify({"answer": "Estoy teniendo problemas de conexión con Google. Intenta de nuevo en unos segundos."}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
