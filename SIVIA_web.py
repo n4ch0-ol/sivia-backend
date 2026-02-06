@@ -13,67 +13,16 @@ CORS(app)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# 2. FUNCIÓN PARA ENCONTRAR EL MODELO CORRECTO (SIN ADIVINAR)
-def get_working_model_url():
-    if not GOOGLE_API_KEY:
-        print("❌ ERROR: No hay API Key.")
-        return None, "Sin API Key"
+# 2. CONFIGURACIÓN MANUAL EXACTA
+# Sacado de TU propia lista: 'models/gemini-2.0-flash'
+# Este modelo es estable y tiene capa gratuita generosa.
+MODEL_NAME = "models/gemini-2.0-flash" 
 
-    print("🕵️  Preguntando a Google qué modelos tengo disponibles...")
-    try:
-        # Pedimos la lista a Google
-        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GOOGLE_API_KEY}"
-        resp = requests.get(list_url)
-        
-        if resp.status_code != 200:
-            print(f"⚠️ Error al listar modelos: {resp.status_code}")
-            # Fallback de emergencia a la versión 001 específica (suele ser la más segura)
-            return f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key={GOOGLE_API_KEY}", "gemini-1.5-flash-001 (Fallback)"
+# Construimos la URL con precisión quirúrgica
+# La URL final quedará: .../v1beta/models/gemini-2.0-flash:generateContent
+API_URL = f"https://generativelanguage.googleapis.com/v1beta/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
 
-        data = resp.json()
-        models = data.get('models', [])
-        
-        found_model = None
-        
-        # BUSCAMOS EL ELEGIDO
-        print(f"📋 Modelos encontrados: {[m['name'] for m in models]}") # Esto saldrá en el log
-        
-        # Prioridad 1: Cualquier variante de Flash (Es rápido y gratis)
-        for m in models:
-            name = m['name']
-            if 'flash' in name.lower():
-                found_model = name
-                break
-        
-        # Prioridad 2: Gemini Pro 1.0 (El clásico, también gratis)
-        if not found_model:
-            for m in models:
-                if 'gemini-pro' in name.lower() and '1.5' not in name: # Evitar 1.5 Pro que a veces es de pago
-                    found_model = name
-                    break
-        
-        # Prioridad 3: Gemini 1.0 Pro Latest
-        if not found_model:
-             for m in models:
-                if 'gemini-1.0-pro' in name.lower():
-                    found_model = name
-                    break
-
-        if found_model:
-            print(f"✅ ¡EUREKA! Usaremos: {found_model}")
-            # Construimos la URL sin duplicar 'models/'
-            # La API devuelve 'models/gemini-xyz', así que lo pegamos directo.
-            return f"https://generativelanguage.googleapis.com/v1beta/{found_model}:generateContent?key={GOOGLE_API_KEY}", found_model
-        else:
-            print("⚠️ No encontré ni Flash ni Pro. Probando suerte con gemini-1.5-flash-001 hardcoded.")
-            return f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key={GOOGLE_API_KEY}", "gemini-1.5-flash-001 (Hardcoded)"
-
-    except Exception as e:
-        print(f"❌ Error buscando modelos: {e}")
-        return f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}", "Error"
-
-# INICIALIZACIÓN
-ACTIVE_URL, MODEL_NAME = get_working_model_url()
+print(f"🚀 SIVIA CONSTANTE: Usando {MODEL_NAME}")
 
 # 3. BASE DE DATOS
 try:
@@ -81,26 +30,21 @@ try:
         data = json.load(file)
         database_content = json.dumps(data, indent=2, ensure_ascii=False)
 except:
-    database_content = "No hay datos."
+    database_content = "No hay datos específicos."
 
 SYSTEM_INSTRUCTION = f"""
-Eres SIVIA.
---- DATOS ---
+Eres SIVIA, la IA del Centro de Estudiantes.
+--- DATOS LOCALES ---
 {database_content}
-Responde breve y útil.
+REGLA: Responde de forma útil y breve.
 """
 
 @app.route('/', methods=['GET'])
 def home():
-    return f"SIVIA ONLINE - Model: {MODEL_NAME}"
+    return f"SIVIA ONLINE - {MODEL_NAME}"
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    # Reintentar URL si falló al inicio
-    global ACTIVE_URL
-    if not ACTIVE_URL or "Error" in MODEL_NAME:
-         ACTIVE_URL, _ = get_working_model_url()
-
     try:
         data = request.json
         user_msg = data.get("question")
@@ -119,30 +63,34 @@ def chat():
         
         parts.append({"text": full_text})
 
-        payload = {"contents": [{"parts": parts}]}
+        payload = {
+            "contents": [{"parts": parts}]
+        }
 
-        print(f"📤 Enviando a: {ACTIVE_URL.split('?')[0]}") # Log para ver a dónde dispara
-        
+        # ENVÍO HTTP
+        print(f"📤 Enviando petición a {MODEL_NAME}...")
         response = requests.post(
-            ACTIVE_URL, 
+            API_URL, 
             headers={'Content-Type': 'application/json'},
             json=payload,
             timeout=30
         )
 
         if response.status_code != 200:
+            print(f"❌ Error Google: {response.text}")
             return jsonify({"answer": f"Error Google ({response.status_code}): {response.text}"}), 500
 
         result = response.json()
+        
         try:
             answer = result['candidates'][0]['content']['parts'][0]['text']
             return jsonify({"answer": answer})
         except:
-            return jsonify({"answer": "Google respondió vacío."})
+            return jsonify({"answer": "Google respondió pero no pude leer el texto."})
 
     except Exception as e:
-        print(f"❌ ERROR SERVER: {e}")
-        return jsonify({"answer": "Error interno."}), 500
+        print(f"❌ ERROR INTERNO: {e}")
+        return jsonify({"answer": "Error interno del servidor."}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
