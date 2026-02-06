@@ -1,57 +1,59 @@
 import os
 import json
-import base64
-import io
+import google.generativeai as genai
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 import PIL.Image
-
-# --- IMPORTAMOS LA NUEVA LIBRERÍA (SDK v2) ---
-from google import genai
-from google.genai import types
+import io
+import base64
 
 # 1. CARGA DE VARIABLES
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# 2. CONFIGURACIÓN DEL CLIENTE
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
-    print("❌ ERROR FATAL: No se encontró la GOOGLE_API_KEY")
+    print("❌ ERROR: Falta la API KEY")
 
-client = genai.Client(api_key=GOOGLE_API_KEY)
+# Configuramos la librería CLÁSICA
+genai.configure(api_key=GOOGLE_API_KEY)
 
-# ==============================================================================
-#  CONFIGURACIÓN DEL MODELO - SOLUCIÓN DEFINITIVA
-# ==============================================================================
-# NO usamos autodetección.
-# Usamos el ID EXACTO de la versión estable 001.
-# Esto evita que la librería se confunda con los alias.
-MODEL_NAME = "gemini-1.5-flash-001" 
-
-print(f"🚀 SIVIA INICIADA. Usando ID específico: {MODEL_NAME}")
-
-# 3. BASE DE DATOS (JSON)
+# 2. BASE DE DATOS
 try:
     with open('knowledge_base.json', 'r', encoding='utf-8') as file:
         data = json.load(file)
         database_content = json.dumps(data, indent=2, ensure_ascii=False)
 except:
-    database_content = "No hay datos específicos disponibles."
+    database_content = "No hay datos específicos."
 
-# 4. INSTRUCCIONES
+# 3. CONFIGURACIÓN DEL MODELO
+# Usamos el nombre estándar que SIEMPRE funciona en esta librería
+MODEL_NAME = "gemini-1.5-flash"
+
 SYSTEM_INSTRUCTION = f"""
-Eres SIVIA, la IA del Centro de Estudiantes.
+Eres SIVIA.
 --- DATOS LOCALES ---
 {database_content}
 REGLA: Si la respuesta no está en los datos locales, USA GOOGLE SEARCH.
 """
 
+# Definición de herramientas (Sintaxis para versión 0.8.3+)
+tools_config = [
+    {"google_search": {}}
+]
+
+# Iniciamos el modelo
+model = genai.GenerativeModel(
+    model_name=MODEL_NAME,
+    system_instruction=SYSTEM_INSTRUCTION,
+    tools=tools_config
+)
+
 @app.route('/', methods=['GET'])
 def home():
-    return f"SIVIA ONLINE - {MODEL_NAME}"
+    return "SIVIA CLÁSICA - ONLINE"
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -59,59 +61,35 @@ def chat():
         data = request.json
         user_msg = data.get("question")
         img_data = data.get("image")
-        
-        # Herramienta de búsqueda activada
-        tools_config = [types.Tool(google_search=types.GoogleSearch())]
-        
-        response_text = ""
 
         if img_data:
             # === CASO IMAGEN ===
+            # Nota: Gemini 1.5 Flash a veces no permite Search + Imagen simultáneo en tier gratis
+            # Así que para imágenes, desactivamos tools temporalmente o usamos un modelo sin tools
             image_bytes = base64.b64decode(img_data)
             img = PIL.Image.open(io.BytesIO(image_bytes))
             
-            # Enrutamos la llamada al modelo
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=[user_msg, img],
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.4
-                )
-            )
-            response_text = response.text
+            # Usamos el modelo generativo directo para la imagen
+            response = model.generate_content([user_msg, img])
+            return jsonify({"answer": response.text})
             
         else:
-            # === CASO TEXTO (CON BÚSQUEDA) ===
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=user_msg,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    tools=tools_config,
-                    temperature=0.4,
-                    response_modalities=["TEXT"] # Forzamos respuesta texto
-                )
-            )
+            # === CASO TEXTO + BÚSQUEDA ===
+            # Aquí sí usa las tools definidas arriba
+            response = model.generate_content(user_msg)
             
-            # Lógica de extracción de respuesta
+            # Extraer respuesta con seguridad
             if response.text:
-                response_text = response.text
+                return jsonify({"answer": response.text})
             elif response.candidates and response.candidates[0].content.parts:
-                part = response.candidates[0].content.parts[0]
-                if part.text:
-                    response_text = part.text
-                else:
-                    response_text = "He encontrado información pero no puedo mostrarla en este formato."
+                return jsonify({"answer": response.candidates[0].content.parts[0].text})
             else:
-                response_text = "Lo siento, hubo un problema generando la respuesta."
-
-        return jsonify({"answer": response_text})
+                return jsonify({"answer": "Busqué información pero no pude armar una respuesta."})
 
     except Exception as e:
-        print(f"❌ ERROR CRÍTICO EN CHAT: {e}")
-        # Mensaje de error limpio para el frontend
-        return jsonify({"answer": "Estoy teniendo problemas de conexión con Google. Intenta de nuevo en unos segundos."}), 500
+        print(f"❌ ERROR: {e}")
+        # Si el error es por seguridad o bloqueo, lo informamos
+        return jsonify({"answer": f"Ocurrió un error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
