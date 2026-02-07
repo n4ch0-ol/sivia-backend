@@ -1,7 +1,6 @@
 import os
 import json
 import requests
-import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -13,12 +12,12 @@ CORS(app)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# 2. CONFIGURACIÓN
-# Usamos gemini-1.5-flash que soporta herramientas de búsqueda y es rápido.
-MODEL_NAME = "gemini-1.5-flash"
+# 2. CONFIGURACIÓN DEL MODELO
+# Usamos el nombre EXACTO que apareció en tu lista.
+MODEL_NAME = "gemini-flash-latest"
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
 
-# 3. BASE DE DATOS
+# 3. BASE DE DATOS LOCAL
 try:
     with open('knowledge_base.json', 'r', encoding='utf-8') as file:
         data = json.load(file)
@@ -26,29 +25,26 @@ try:
 except:
     database_content = "No hay datos específicos."
 
-# 4. INSTRUCCIONES CON FILTRO DE DOMINIO
-# Aquí le ordenamos que priorice los dominios que pediste.
+# 4. INSTRUCCIONES CON LOS FILTROS QUE PEDISTE
 SYSTEM_INSTRUCTION = f"""
 Eres SIVIA, la IA del Centro de Estudiantes.
 
---- TUS REGLAS DE BÚSQUEDA ---
-1. Tienes acceso a Google Search. ÚSALO si la pregunta requiere información actual o externa.
-2. FILTROS DE CALIDAD: Cuando busques información, PRIORIZA ABSOLUTAMENTE fuentes oficiales y académicas que terminen en:
-   - .edu (Educación)
-   - .gob / .gov (Gobierno)
-   - .org (Organizaciones)
-3. Si la información viene de un blog genérico o red social, verifícala o deséchala.
-4. Si la pregunta es sobre el "Centro de Estudiantes" o "Manos Unidas", usa PRIMERO tu base de datos local.
+--- REGLAS DE BÚSQUEDA ---
+1. Tienes la herramienta Google Search. ÚSALA para datos actuales (noticias, política, clima, etc.).
+2. FILTROS DE FUENTES:
+   - Prioriza resultados de dominios: .edu, .gob, .org.
+   - Si la información viene de fuentes no oficiales, verifícala dos veces o indica que es un rumor.
+3. Si te preguntan sobre el "Centro de Estudiantes", usa PRIMERO los DATOS LOCALES.
 
---- BASE DE DATOS LOCAL ---
+--- DATOS LOCALES ---
 {database_content}
 
-Responde de forma clara, útil y citando fuentes si buscaste en internet.
+Responde de forma concisa.
 """
 
 @app.route('/', methods=['GET'])
 def home():
-    return f"SIVIA ONLINE ({MODEL_NAME}) - SEARCH ON"
+    return f"SIVIA ONLINE - {MODEL_NAME} (Search Enabled)"
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -57,9 +53,7 @@ def chat():
         user_msg = data.get("question")
         img_data = data.get("image")
 
-        parts = []
-        # Inyectamos la instrucción como contexto
-        parts.append({"text": f"{SYSTEM_INSTRUCTION}\n\nPREGUNTA DEL USUARIO: {user_msg}"})
+        parts = [{"text": f"{SYSTEM_INSTRUCTION}\n\nUsuario: {user_msg}"}]
 
         if img_data:
             parts.append({
@@ -69,45 +63,49 @@ def chat():
                 }
             })
 
-        # === AQUÍ ESTÁ LA MAGIA ===
-        # Agregamos la herramienta de búsqueda en el JSON manual
-        payload = {
+        # INTENTO 1: CON BÚSQUEDA (INTERNET)
+        payload_search = {
             "contents": [{"parts": parts}],
-            "tools": [
-                {"google_search": {}}  # <--- ESTO ACTIVA INTERNET
-            ]
+            "tools": [{"google_search": {}}]  # Activamos Google Search
         }
 
-        print(f"📡 Consultando a Google con Search activado...")
+        print(f"📡 Buscando en internet con {MODEL_NAME}...")
         response = requests.post(
             API_URL, 
             headers={'Content-Type': 'application/json'},
-            json=payload,
-            timeout=40 # Damos un poco más de tiempo para la búsqueda
+            json=payload_search,
+            timeout=40
         )
 
+        # Si falla (ej: el modelo no soporta búsqueda o da 404), intentamos sin búsqueda
         if response.status_code != 200:
-            print(f"❌ Error Google: {response.text}")
-            return jsonify({"answer": f"Error ({response.status_code}): No pude buscar en internet."})
+            print(f"⚠️ Falló la búsqueda ({response.status_code}). Reintentando sin internet...")
+            
+            # INTENTO 2: SIN BÚSQUEDA (MODO SEGURO)
+            payload_simple = {"contents": [{"parts": parts}]}
+            response = requests.post(
+                API_URL, 
+                headers={'Content-Type': 'application/json'},
+                json=payload_simple,
+                timeout=30
+            )
 
+            if response.status_code != 200:
+                 return jsonify({"answer": f"Error total ({response.status_code}): {response.text}"})
+
+        # PROCESAR RESPUESTA
         result = response.json()
-        
         try:
-            # Intentamos leer la respuesta
-            # A veces la respuesta con búsqueda tiene una estructura compleja, buscamos el texto principal
-            candidate = result['candidates'][0]
-            answer = candidate['content']['parts'][0]['text']
-            
-            # (Opcional) Podríamos buscar si hay 'groundingMetadata' para ver los links, 
-            # pero el modelo suele incluirlos en el texto si se lo pides.
-            
+            # Buscamos el texto en la respuesta
+            answer = result['candidates'][0]['content']['parts'][0]['text']
             return jsonify({"answer": answer})
         except Exception as e:
-            print(f"⚠️ Error parseando respuesta: {e}")
-            return jsonify({"answer": "Encontré información pero no pude procesarla correctamente."})
+            # A veces la respuesta viene vacía si hubo un filtro de seguridad
+            print(f"Error leyendo JSON: {e}")
+            return jsonify({"answer": "Lo siento, encontré información pero no pude leerla correctamente."})
 
     except Exception as e:
-        print(f"❌ ERROR INTERNO: {e}")
+        print(f"❌ ERROR SERVIDOR: {e}")
         return jsonify({"answer": "Error interno del servidor."}), 500
 
 if __name__ == '__main__':
