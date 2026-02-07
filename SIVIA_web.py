@@ -1,27 +1,25 @@
 import os
 import json
 import requests
-import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 
-# 1. CARGA DE VARIABLES
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# 2. CONFIGURACIÓN "A MANO" (SIN LIBRERÍA GOOGLE)
-# Usamos la API v1b (versión estable) y el modelo Flash que es el más permisivo.
-# Si este falla, el problema es tu API KEY (créditos/bloqueo).
-MODEL_NAME = "gemini-1.5-flash"
+# --- AQUÍ ESTÁ EL CAMBIO ---
+# Usamos el nombre que VIMOS en tu lista de modelos disponibles.
+# 'gemini-flash-latest' apunta siempre a la versión Flash más nueva que tengas habilitada.
+MODEL_NAME = "gemini-flash-latest" 
+
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
 
-print(f"🚀 SIVIA INICIANDO EN MODO HTTP DIRECTO ({MODEL_NAME})")
+print(f"🚀 SIVIA CONECTANDO A: {MODEL_NAME}")
 
-# 3. BASE DE DATOS
 try:
     with open('knowledge_base.json', 'r', encoding='utf-8') as file:
         data = json.load(file)
@@ -38,9 +36,7 @@ Responde corto y útil.
 
 @app.route('/', methods=['GET'])
 def home():
-    if not GOOGLE_API_KEY:
-        return "ERROR: FALTA API KEY"
-    return f"SIVIA HTTP MODE - ONLINE"
+    return f"SIVIA ONLINE - {MODEL_NAME}"
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -49,9 +45,9 @@ def chat():
         user_msg = data.get("question")
         img_data = data.get("image")
 
-        # Construcción manual del paquete JSON para Google
         parts = []
-        full_prompt = f"{SYSTEM_INSTRUCTION}\n\nUsuario: {user_msg}"
+        # Prompt del sistema + usuario
+        parts.append({"text": f"{SYSTEM_INSTRUCTION}\n\nUsuario: {user_msg}"})
 
         if img_data:
             parts.append({
@@ -60,15 +56,9 @@ def chat():
                     "data": img_data
                 }
             })
-        
-        parts.append({"text": full_prompt})
 
-        payload = {
-            "contents": [{"parts": parts}]
-        }
+        payload = {"contents": [{"parts": parts}]}
 
-        # ENVÍO DIRECTO (Sin intermediarios)
-        print(f"📡 Enviando petición a Google...")
         response = requests.post(
             API_URL,
             headers={'Content-Type': 'application/json'},
@@ -76,32 +66,20 @@ def chat():
             timeout=30
         )
 
-        # MANEJO DE ERRORES REAL
         if response.status_code != 200:
-            error_details = response.text
-            print(f"❌ ERROR GOOGLE ({response.status_code}): {error_details}")
-            
-            # Si es error 429 (Cuota), avisamos bonito
-            if response.status_code == 429:
-                return jsonify({"answer": "Estoy saturada (Límite de cuota Google). Intenta en un rato."})
-            
-            # Si es 404 (Modelo no existe/mal nombre)
-            if response.status_code == 404:
-                return jsonify({"answer": "Error de configuración: Google no encuentra el modelo 1.5-flash."})
+            # Si falla, imprimimos el error EXACTO de Google
+            print(f"❌ ERROR GOOGLE: {response.text}")
+            return jsonify({"answer": f"Error Google ({response.status_code}): {response.text}"}), response.status_code
 
-            return jsonify({"answer": f"Error técnico ({response.status_code}): {error_details}"})
-
-        # PROCESAR RESPUESTA
         result = response.json()
         try:
             answer = result['candidates'][0]['content']['parts'][0]['text']
             return jsonify({"answer": answer})
-        except (KeyError, IndexError):
-            # A veces Google devuelve respuesta vacía si bloquea por seguridad
-            return jsonify({"answer": "Google bloqueó la respuesta (Seguridad/Filtro)."})
+        except:
+            return jsonify({"answer": "Google respondió vacío."})
 
     except Exception as e:
-        print(f"❌ ERROR SERVIDOR: {e}")
+        print(f"❌ ERROR INTERNO: {e}")
         return jsonify({"answer": "Error interno del servidor."}), 500
 
 if __name__ == '__main__':
