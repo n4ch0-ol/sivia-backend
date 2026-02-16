@@ -13,8 +13,8 @@ CORS(app)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # 2. CONFIGURACIÓN DEL MODELO
-# Usamos el nombre EXACTO que apareció en tu lista.
-MODEL_NAME = "gemini-flash-latest"
+# Usamos gemini-1.5-flash para mayor estabilidad en v1beta
+MODEL_NAME = "gemini-1.5-flash"
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
 
 # 3. BASE DE DATOS LOCAL
@@ -49,27 +49,44 @@ def home():
 @app.route('/chat', methods=['POST'])
 def chat():
     try:
-        data = request.json
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"answer": "Petición no válida (no se recibió JSON)."}), 400
+            
         user_msg = data.get("question")
         img_data = data.get("image")
 
-        parts = [{"text": f"{SYSTEM_INSTRUCTION}\n\nUsuario: {user_msg}"}]
+        if not user_msg:
+            return jsonify({"answer": "Por favor, escribe una pregunta."}), 400
 
+        # Preparamos las partes del contenido (mensaje del usuario)
+        user_parts = [{"text": user_msg}]
         if img_data:
-            parts.append({
+            user_parts.append({
                 "inline_data": {
                     "mime_type": "image/jpeg",
                     "data": img_data
                 }
             })
 
-        # INTENTO 1: CON BÚSQUEDA (INTERNET)
+        # Configuración de seguridad para evitar bloqueos innecesarios por "falsos positivos"
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"}
+        ]
+
+        # INTENTO 1: CON BÚSQUEDA (GROUNDING)
+        # Nota: Usamos google_search_retrieval que es el campo correcto para modelos 1.5
         payload_search = {
-            "contents": [{"parts": parts}],
-            "tools": [{"google_search": {}}]  # Activamos Google Search
+            "contents": [{"parts": user_parts}],
+            "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+            "tools": [{"google_search_retrieval": {}}],
+            "safetySettings": safety_settings
         }
 
-        print(f"📡 Buscando en internet con {MODEL_NAME}...")
+        print(f"📡 Consultando a {MODEL_NAME} con búsqueda...")
         response = requests.post(
             API_URL, 
             headers={'Content-Type': 'application/json'},
@@ -77,12 +94,16 @@ def chat():
             timeout=40
         )
 
-        # Si falla (ej: el modelo no soporta búsqueda o da 404), intentamos sin búsqueda
+        # Fallback si falla la búsqueda (ej. por cuota, error de herramienta o modelo)
         if response.status_code != 200:
-            print(f"⚠️ Falló la búsqueda ({response.status_code}). Reintentando sin internet...")
+            print(f"⚠️ Error en búsqueda ({response.status_code}): {response.text}")
+            print("🔄 Reintentando en modo simple (sin búsqueda)...")
             
-            # INTENTO 2: SIN BÚSQUEDA (MODO SEGURO)
-            payload_simple = {"contents": [{"parts": parts}]}
+            payload_simple = {
+                "contents": [{"parts": user_parts}],
+                "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+                "safetySettings": safety_settings
+            }
             response = requests.post(
                 API_URL, 
                 headers={'Content-Type': 'application/json'},
@@ -90,19 +111,34 @@ def chat():
                 timeout=30
             )
 
-            if response.status_code != 200:
-                 return jsonify({"answer": f"Error total ({response.status_code}): {response.text}"})
+        if response.status_code != 200:
+            print(f"❌ Error API ({response.status_code}): {response.text}")
+            # Intentamos dar un mensaje más útil basado en el error
+            try:
+                err_data = response.json()
+                msg = err_data.get('error', {}).get('message', 'Error desconocido')
+                return jsonify({"answer": f"Google API Error: {msg} ({response.status_code})"})
+            except:
+                return jsonify({"answer": f"Error del servidor de Google ({response.status_code})."})
 
         # PROCESAR RESPUESTA
         result = response.json()
         try:
-            # Buscamos el texto en la respuesta
-            answer = result['candidates'][0]['content']['parts'][0]['text']
-            return jsonify({"answer": answer})
-        except Exception as e:
-            # A veces la respuesta viene vacía si hubo un filtro de seguridad
-            print(f"Error leyendo JSON: {e}")
-            return jsonify({"answer": "Lo siento, encontré información pero no pude leerla correctamente."})
+            # Extraemos la respuesta de texto
+            # Verificamos si hay candidatos y contenido
+            if 'candidates' in result and len(result['candidates']) > 0:
+                candidate = result['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    answer = candidate['content']['parts'][0]['text']
+                    return jsonify({"answer": answer})
+            
+            # Si llegamos aquí, es que no hubo texto (posible bloqueo por seguridad)
+            print(f"⚠️ Respuesta sin texto. Result: {result}")
+            return jsonify({"answer": "Lo siento, la IA no pudo generar una respuesta. Puede que el tema esté restringido por seguridad."})
+            
+        except (KeyError, IndexError, TypeError) as e:
+            print(f"Error procesando JSON: {e} | Respuesta completa: {result}")
+            return jsonify({"answer": "Hubo un problema al leer la respuesta de la IA. Por favor, intenta de nuevo."})
 
     except Exception as e:
         print(f"❌ ERROR SERVIDOR: {e}")
