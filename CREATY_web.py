@@ -117,21 +117,19 @@ def generate():
         result = response.json()
 
         if response.status_code != 200:
-            error_msg = result.get('error', {}).get('message', response.text)
-            print(f"❌ Error Google ({response.status_code}): {error_msg}")
-            return jsonify({"error": f"Google API Error: {error_msg}"}), response.status_code
+            print(f"❌ Error Google ({response.status_code}): {result}")
+            return jsonify({"error": f"Google API Error: {result.get('error', {}).get('message', response.text)}"}), response.status_code
 
         # La imagen viene en base64 dentro de 'predictions'
         if 'predictions' in result and len(result['predictions']) > 0:
-            prediction = result['predictions'][0]
-            if 'bytesBase64Encoded' in prediction:
-                return jsonify({"image": prediction['bytesBase64Encoded']})
-            elif 'base64' in prediction:
-                return jsonify({"image": prediction['base64']})
+            # Buscamos la imagen en la primera predicción
+            image_b64 = result['predictions'][0].get('bytesBase64Encoded') or result['predictions'][0].get('base64')
+            if image_b64:
+                return jsonify({"image": image_b64})
 
         # Si no hay predicciones, puede ser por filtros de seguridad
         print(f"⚠️ Respuesta sin imagen: {result}")
-        return jsonify({"error": "Google no generó la imagen. Puede que el prompt haya sido filtrado por seguridad."}), 500
+        return jsonify({"error": "Google no generó la imagen. Puede que el prompt haya sido filtrado por seguridad o no sea válido."}), 500
 
     except Exception as e:
         print(f"❌ Error interno: {e}")
