@@ -13,8 +13,8 @@ CORS(app)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # 2. CONFIGURACIÓN DEL MODELO
-# Usamos gemini-1.5-flash para mayor estabilidad en v1beta
-MODEL_NAME = "gemini-1.5-flash"
+# Usamos gemini-2.0-flash para mejor rendimiento y soporte de búsqueda web
+MODEL_NAME = "gemini-2.0-flash"
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
 
 # 3. BASE DE DATOS LOCAL
@@ -78,11 +78,11 @@ def chat():
         ]
 
         # INTENTO 1: CON BÚSQUEDA (GROUNDING)
-        # Nota: Usamos google_search_retrieval que es el campo correcto para modelos 1.5
+        # Nota: Usamos google_search que es el estándar actual
         payload_search = {
             "contents": [{"parts": user_parts}],
             "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
-            "tools": [{"google_search_retrieval": {}}],
+            "tools": [{"google_search": {}}],
             "safetySettings": safety_settings
         }
 
