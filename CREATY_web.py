@@ -28,41 +28,58 @@ def home():
         <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white;">
             <h1>🎨 CREATY ENGINE</h1>
             <p>Escribe algo y crearé una imagen.</p>
-            <input id="prompt" type="text" placeholder="Ej: Un capibara astronauta" style="padding: 10px; width: 300px;">
-            <button onclick="generate()" style="padding: 10px 20px; cursor: pointer;">GENERAR</button>
+
+            <div style="background: #2a2a2a; padding: 20px; border-radius: 15px; display: inline-block; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+                <input id="prompt" type="text" placeholder="Ej: Un capibara astronauta en Marte"
+                       style="padding: 12px; width: 350px; border-radius: 8px; border: none; outline: none; font-size: 16px;">
+
+                <select id="aspectRatio" style="padding: 11px; border-radius: 8px; border: none; cursor: pointer; font-size: 16px; background: #444; color: white; margin-left: 10px;">
+                    <option value="1:1">1:1 (Cuadrado)</option>
+                    <option value="16:9">16:9 (Horizontal)</option>
+                    <option value="9:16">9:16 (Vertical)</option>
+                    <option value="4:3">4:3 (Clásico)</option>
+                    <option value="3:4">3:4 (Retrato)</option>
+                </select>
+
+                <button onclick="generate()" style="padding: 12px 25px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-weight: bold; cursor: pointer; margin-left: 10px; transition: 0.3s;">
+                    GENERAR
+                </button>
+            </div>
+
             <br><br>
-            <div id="status"></div>
-            <img id="result" style="max-width: 500px; margin-top: 20px; border-radius: 10px; box-shadow: 0 0 20px rgba(255,255,255,0.1);">
+            <div id="status" style="font-weight: bold; min-height: 24px;"></div>
+            <img id="result" style="max-width: 90%; max-height: 600px; margin-top: 20px; border-radius: 10px; box-shadow: 0 0 30px rgba(255,255,255,0.1); display: none;">
             
             <script>
                 async function generate() {
                     const prompt = document.getElementById('prompt').value;
+                    const aspectRatio = document.getElementById('aspectRatio').value;
                     const status = document.getElementById('status');
                     const img = document.getElementById('result');
                     
-                    if(!prompt) return alert("Escribe algo!");
+                    if(!prompt) return alert("¡Escribe una descripción primero!");
                     
-                    status.innerText = "⏳ Generando... (Esto tarda unos segundos)";
+                    status.innerHTML = "<span style='color: #60a5fa;'>⏳ Generando... (Esto tarda unos segundos)</span>";
                     img.style.display = 'none';
                     
                     try {
                         const response = await fetch('/generate', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ prompt: prompt })
+                            body: JSON.stringify({ prompt: prompt, aspectRatio: aspectRatio })
                         });
                         
                         const data = await response.json();
                         
                         if(data.image) {
                             img.src = "data:image/png;base64," + data.image;
-                            img.style.display = 'block';
-                            status.innerText = "✅ ¡Listo!";
+                            img.style.display = 'inline-block';
+                            status.innerHTML = "<span style='color: #4ade80;'>✅ ¡Listo!</span>";
                         } else {
-                            status.innerText = "❌ Error: " + (data.error || "Desconocido");
+                            status.innerHTML = "<span style='color: #f87171;'>❌ Error: " + (data.error || "Desconocido") + "</span>";
                         }
                     } catch (e) {
-                        status.innerText = "❌ Error de conexión";
+                        status.innerHTML = "<span style='color: #f87171;'>❌ Error de conexión</span>";
                     }
                 }
             </script>
@@ -73,19 +90,24 @@ def home():
 @app.route('/generate', methods=['POST'])
 def generate():
     if not GOOGLE_API_KEY:
-        return jsonify({"error": "Falta API KEY en .env"}), 500
+        return jsonify({"error": "Falta API KEY en el entorno o archivo .env"}), 500
 
     try:
-        data = request.json
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"error": "No se recibió un JSON válido."}), 400
+
         prompt = data.get("prompt")
+        if not prompt:
+            return jsonify({"error": "El prompt es obligatorio."}), 400
         
-        # Opciones avanzadas (puedes cambiarlas)
+        # Opciones avanzadas
         # aspectRatio: "1:1", "16:9", "4:3", "3:4", "9:16"
         aspect_ratio = data.get("aspectRatio", "1:1") 
 
-        print(f"🖌️  Pintando: '{prompt}'...")
+        print(f"🖌️  Pintando: '{prompt}' (Ratio: {aspect_ratio})...")
 
-        # Estructura EXACTA que pide Google para Imagen
+        # Estructura optimizada para Google Imagen 3
         payload = {
             "instances": [
                 {
@@ -93,8 +115,10 @@ def generate():
                 }
             ],
             "parameters": {
-                "sampleCount": 1, # Solo 1 imagen por ahora
-                "aspectRatio": aspect_ratio
+                "sampleCount": 1,
+                "aspectRatio": aspect_ratio,
+                "safetySetting": "BLOCK_ONLY_HIGH",
+                "personGeneration": "ALLOW_ADULT"
             }
         }
 
@@ -103,22 +127,28 @@ def generate():
             API_URL,
             headers={'Content-Type': 'application/json'},
             json=payload,
-            timeout=60 # Damos hasta 60 segundos
+            timeout=60
         )
-
-        if response.status_code != 200:
-            print(f"❌ Error Google: {response.text}")
-            return jsonify({"error": f"Google rechazó el pedido ({response.status_code})."}), response.status_code
 
         # Parseamos la respuesta
         result = response.json()
-        
+
+        if response.status_code != 200:
+            error_msg = result.get('error', {}).get('message', response.text)
+            print(f"❌ Error Google ({response.status_code}): {error_msg}")
+            return jsonify({"error": f"Google API Error: {error_msg}"}), response.status_code
+
         # La imagen viene en base64 dentro de 'predictions'
-        try:
-            image_b64 = result['predictions'][0]['bytesBase64Encoded']
-            return jsonify({"image": image_b64})
-        except (KeyError, IndexError):
-            return jsonify({"error": "Google no devolvió ninguna imagen (Posible filtro de seguridad)."}), 500
+        if 'predictions' in result and len(result['predictions']) > 0:
+            prediction = result['predictions'][0]
+            if 'bytesBase64Encoded' in prediction:
+                return jsonify({"image": prediction['bytesBase64Encoded']})
+            elif 'base64' in prediction:
+                return jsonify({"image": prediction['base64']})
+
+        # Si no hay predicciones, puede ser por filtros de seguridad
+        print(f"⚠️ Respuesta sin imagen: {result}")
+        return jsonify({"error": "Google no generó la imagen. Puede que el prompt haya sido filtrado por seguridad."}), 500
 
     except Exception as e:
         print(f"❌ Error interno: {e}")
