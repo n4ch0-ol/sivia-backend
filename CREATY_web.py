@@ -28,58 +28,41 @@ def home():
         <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a1a; color: white;">
             <h1>🎨 CREATY ENGINE</h1>
             <p>Escribe algo y crearé una imagen.</p>
-
-            <div style="background: #2a2a2a; padding: 20px; border-radius: 15px; display: inline-block; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-                <input id="prompt" type="text" placeholder="Ej: Un capibara astronauta en Marte"
-                       style="padding: 12px; width: 350px; border-radius: 8px; border: none; outline: none; font-size: 16px;">
-
-                <select id="aspectRatio" style="padding: 11px; border-radius: 8px; border: none; cursor: pointer; font-size: 16px; background: #444; color: white; margin-left: 10px;">
-                    <option value="1:1">1:1 (Cuadrado)</option>
-                    <option value="16:9">16:9 (Horizontal)</option>
-                    <option value="9:16">9:16 (Vertical)</option>
-                    <option value="4:3">4:3 (Clásico)</option>
-                    <option value="3:4">3:4 (Retrato)</option>
-                </select>
-
-                <button onclick="generate()" style="padding: 12px 25px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-weight: bold; cursor: pointer; margin-left: 10px; transition: 0.3s;">
-                    GENERAR
-                </button>
-            </div>
-
+            <input id="prompt" type="text" placeholder="Ej: Un capibara astronauta" style="padding: 10px; width: 300px;">
+            <button onclick="generate()" style="padding: 10px 20px; cursor: pointer;">GENERAR</button>
             <br><br>
-            <div id="status" style="font-weight: bold; min-height: 24px;"></div>
-            <img id="result" style="max-width: 90%; max-height: 600px; margin-top: 20px; border-radius: 10px; box-shadow: 0 0 30px rgba(255,255,255,0.1); display: none;">
+            <div id="status"></div>
+            <img id="result" style="max-width: 500px; margin-top: 20px; border-radius: 10px; box-shadow: 0 0 20px rgba(255,255,255,0.1);">
             
             <script>
                 async function generate() {
                     const prompt = document.getElementById('prompt').value;
-                    const aspectRatio = document.getElementById('aspectRatio').value;
                     const status = document.getElementById('status');
                     const img = document.getElementById('result');
                     
-                    if(!prompt) return alert("¡Escribe una descripción primero!");
+                    if(!prompt) return alert("Escribe algo!");
                     
-                    status.innerHTML = "<span style='color: #60a5fa;'>⏳ Generando... (Esto tarda unos segundos)</span>";
+                    status.innerText = "⏳ Generando... (Esto tarda unos segundos)";
                     img.style.display = 'none';
                     
                     try {
                         const response = await fetch('/generate', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ prompt: prompt, aspectRatio: aspectRatio })
+                            body: JSON.stringify({ prompt: prompt })
                         });
                         
                         const data = await response.json();
                         
                         if(data.image) {
                             img.src = "data:image/png;base64," + data.image;
-                            img.style.display = 'inline-block';
-                            status.innerHTML = "<span style='color: #4ade80;'>✅ ¡Listo!</span>";
+                            img.style.display = 'block';
+                            status.innerText = "✅ ¡Listo!";
                         } else {
-                            status.innerHTML = "<span style='color: #f87171;'>❌ Error: " + (data.error || "Desconocido") + "</span>";
+                            status.innerText = "❌ Error: " + (data.error || "Desconocido");
                         }
                     } catch (e) {
-                        status.innerHTML = "<span style='color: #f87171;'>❌ Error de conexión</span>";
+                        status.innerText = "❌ Error de conexión";
                     }
                 }
             </script>
