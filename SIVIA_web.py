@@ -12,10 +12,23 @@ CORS(app)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# 2. CONFIGURACIÓN DEL MODELO
-# Usamos gemini-3-flash como solicitó el usuario
-MODEL_NAME = "gemini-3-flash"
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
+# 2. LISTA DE MODELOS A PROBAR (Orden de prioridad)
+MODELS_TO_TRY = [
+    "gemini-3-flash",
+    "gemini-3.0-flash",
+    "gemini-3.1-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-2.5-flash",
+    "gemini-2-flash",
+    "gemini-3",
+    "gemini-3.0",
+    "gemini-3.1",
+    "gemini-2.0",
+    "gemini-1.5",
+    "gemini-2.5",
+    "gemini-2"
+]
 
 # 3. BASE DE DATOS LOCAL
 try:
@@ -25,7 +38,7 @@ try:
 except:
     database_content = "No hay datos específicos."
 
-# 4. INSTRUCCIONES CON LOS FILTROS QUE PEDISTE
+# 4. INSTRUCCIONES DEL SISTEMA
 SYSTEM_INSTRUCTION = f"""
 Eres SIVIA, la IA del Centro de Estudiantes.
 
@@ -44,10 +57,13 @@ Responde de forma concisa.
 
 @app.route('/', methods=['GET'])
 def home():
-    return f"SIVIA ONLINE - {MODEL_NAME} (Search Enabled)"
+    return f"SIVIA ONLINE - Multimodel Fallback Enabled"
 
 @app.route('/chat', methods=['POST'])
 def chat():
+    if not GOOGLE_API_KEY:
+        return jsonify({"answer": "Error: Falta GOOGLE_API_KEY"}), 500
+
     try:
         data = request.get_json(silent=True)
         if not data:
@@ -59,7 +75,6 @@ def chat():
         if not user_msg:
             return jsonify({"answer": "Por favor, escribe una pregunta."}), 400
 
-        # Preparamos las partes del contenido (mensaje del usuario)
         user_parts = [{"text": user_msg}]
         if img_data:
             user_parts.append({
@@ -69,7 +84,6 @@ def chat():
                 }
             })
 
-        # Configuración de seguridad para evitar bloqueos innecesarios por "falsos positivos"
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
@@ -77,68 +91,69 @@ def chat():
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"}
         ]
 
-        # INTENTO 1: CON BÚSQUEDA (GROUNDING)
-        # Nota: Usamos google_search que es el estándar actual
-        payload_search = {
-            "contents": [{"parts": user_parts}],
-            "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
-            "tools": [{"google_search": {}}],
-            "safetySettings": safety_settings
-        }
+        last_error = ""
 
-        print(f"📡 Consultando a {MODEL_NAME} con búsqueda...")
-        response = requests.post(
-            API_URL,
-            headers={'Content-Type': 'application/json'},
-            json=payload_search,
-            timeout=40
-        )
+        # Bucle para probar diferentes modelos
+        for model_name in MODELS_TO_TRY:
+            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GOOGLE_API_KEY}"
 
-        # Fallback si falla la búsqueda (ej. por cuota, error de herramienta o modelo)
-        if response.status_code != 200:
-            print(f"⚠️ Error en búsqueda ({response.status_code}): {response.text}")
-            print("🔄 Reintentando en modo simple (sin búsqueda)...")
+            # Intentamos con BÚSQUEDA primero
+            payloads = [
+                {
+                    "name": "Búsqueda Web",
+                    "json": {
+                        "contents": [{"parts": user_parts}],
+                        "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+                        "tools": [{"google_search": {}}],
+                        "safetySettings": safety_settings
+                    }
+                },
+                {
+                    "name": "Modo Simple",
+                    "json": {
+                        "contents": [{"parts": user_parts}],
+                        "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+                        "safetySettings": safety_settings
+                    }
+                }
+            ]
 
-            payload_simple = {
-                "contents": [{"parts": user_parts}],
-                "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
-                "safetySettings": safety_settings
-            }
-            response = requests.post(
-                API_URL,
-                headers={'Content-Type': 'application/json'},
-                json=payload_simple,
-                timeout=30
-            )
+            for p in payloads:
+                try:
+                    print(f"📡 Probando modelo {model_name} ({p['name']})...")
+                    response = requests.post(
+                        api_url,
+                        headers={'Content-Type': 'application/json'},
+                        json=p['json'],
+                        timeout=35
+                    )
 
-        if response.status_code != 200:
-            print(f"❌ Error API ({response.status_code}): {response.text}")
-            # Intentamos dar un mensaje más útil basado en el error
-            try:
-                err_data = response.json()
-                msg = err_data.get('error', {}).get('message', 'Error desconocido')
-                return jsonify({"answer": f"Google API Error: {msg} ({response.status_code})"})
-            except:
-                return jsonify({"answer": f"Error del servidor de Google ({response.status_code})."})
+                    if response.status_code == 200:
+                        result = response.json()
+                        if 'candidates' in result and len(result['candidates']) > 0:
+                            candidate = result['candidates'][0]
+                            if 'content' in candidate and 'parts' in candidate['content']:
+                                answer = candidate['content']['parts'][0]['text']
+                                return jsonify({"answer": answer, "model": model_name})
 
-        # PROCESAR RESPUESTA
-        result = response.json()
-        try:
-            # Extraemos la respuesta de texto
-            # Verificamos si hay candidatos y contenido
-            if 'candidates' in result and len(result['candidates']) > 0:
-                candidate = result['candidates'][0]
-                if 'content' in candidate and 'parts' in candidate['content']:
-                    answer = candidate['content']['parts'][0]['text']
-                    return jsonify({"answer": answer})
+                        print(f"⚠️ {model_name} respondió sin texto (posible filtro).")
+                    elif response.status_code == 404:
+                        print(f"🚫 El modelo {model_name} no existe (404). Saltando...")
+                        break # Salta al siguiente modelo de MODELS_TO_TRY
+                    else:
+                        print(f"❌ {model_name} falló con código {response.status_code}.")
+                        last_error = f"Google API ({model_name}): {response.text}"
 
-            # Si llegamos aquí, es que no hubo texto (posible bloqueo por seguridad)
-            print(f"⚠️ Respuesta sin texto. Result: {result}")
-            return jsonify({"answer": "Lo siento, la IA no pudo generar una respuesta. Puede que el tema esté restringido por seguridad."})
+                except Exception as e:
+                    print(f"❗ Error de conexión con {model_name}: {e}")
+                    last_error = str(e)
 
-        except (KeyError, IndexError, TypeError) as e:
-            print(f"Error procesando JSON: {e} | Respuesta completa: {result}")
-            return jsonify({"answer": "Hubo un problema al leer la respuesta de la IA. Por favor, intenta de nuevo."})
+            # Si el código llega aquí, este modelo no funcionó, pasamos al siguiente
+
+        return jsonify({
+            "answer": "Lo siento, todos los modelos disponibles están fallando o han agotado su cuota. Por favor, intenta de nuevo en unos minutos.",
+            "details": last_error
+        })
 
     except Exception as e:
         print(f"❌ ERROR SERVIDOR: {e}")
