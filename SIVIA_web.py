@@ -1,3 +1,4 @@
+
 import os
 import json
 import requests
@@ -13,8 +14,8 @@ CORS(app)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # 2. CONFIGURACIÓN DEL MODELO
-# Usamos gemini-2.0-flash para mejor rendimiento y soporte de búsqueda web
-MODEL_NAME = "gemini-2.0-flash"
+# Usamos gemini-3.0-flash como solicitó el usuario
+MODEL_NAME = "gemini-3.0-flash"
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
 
 # 3. BASE DE DATOS LOCAL
@@ -52,7 +53,7 @@ def chat():
         data = request.get_json(silent=True)
         if not data:
             return jsonify({"answer": "Petición no válida (no se recibió JSON)."}), 400
-            
+
         user_msg = data.get("question")
         img_data = data.get("image")
 
@@ -88,7 +89,7 @@ def chat():
 
         print(f"📡 Consultando a {MODEL_NAME} con búsqueda...")
         response = requests.post(
-            API_URL, 
+            API_URL,
             headers={'Content-Type': 'application/json'},
             json=payload_search,
             timeout=40
@@ -98,14 +99,14 @@ def chat():
         if response.status_code != 200:
             print(f"⚠️ Error en búsqueda ({response.status_code}): {response.text}")
             print("🔄 Reintentando en modo simple (sin búsqueda)...")
-            
+
             payload_simple = {
                 "contents": [{"parts": user_parts}],
                 "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
                 "safetySettings": safety_settings
             }
             response = requests.post(
-                API_URL, 
+                API_URL,
                 headers={'Content-Type': 'application/json'},
                 json=payload_simple,
                 timeout=30
@@ -131,11 +132,11 @@ def chat():
                 if 'content' in candidate and 'parts' in candidate['content']:
                     answer = candidate['content']['parts'][0]['text']
                     return jsonify({"answer": answer})
-            
+
             # Si llegamos aquí, es que no hubo texto (posible bloqueo por seguridad)
             print(f"⚠️ Respuesta sin texto. Result: {result}")
             return jsonify({"answer": "Lo siento, la IA no pudo generar una respuesta. Puede que el tema esté restringido por seguridad."})
-            
+
         except (KeyError, IndexError, TypeError) as e:
             print(f"Error procesando JSON: {e} | Respuesta completa: {result}")
             return jsonify({"answer": "Hubo un problema al leer la respuesta de la IA. Por favor, intenta de nuevo."})
