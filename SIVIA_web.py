@@ -14,8 +14,8 @@ CORS(app)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # 2. CONFIGURACIÓN DEL MODELO
-# Usamos gemini-3.0-flash como solicitó el usuario
-MODEL_NAME = "gemini-3.0-flash"
+# Usamos gemini-3-flash como solicitó el usuario
+MODEL_NAME = "gemini-3-flash"
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
 
 # 3. BASE DE DATOS LOCAL
