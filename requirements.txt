@@ -4,4 +4,4 @@ flask-cors
 python-dotenv
 pillow
 gunicorn
-
+beautifulsoup4
