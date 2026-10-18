@@ -135,7 +135,7 @@ def web_search(query):
         return "Error al conectar con el motor de búsqueda."
 
 
-def build_messages(user_msg):
+def build_messages(user_msg, history=None):
     msg_content = user_msg
     lowered = user_msg.lower()
     triggers = ["busca web", "buscar web", "search web", "buscame", "buscá", "busca sobre"]
@@ -147,10 +147,23 @@ def build_messages(user_msg):
         msg_content = (f"El usuario pidió buscar en la web sobre: '{query.strip()}'. "
                        f"Resultados obtenidos:\n{result}\n\n"
                        f"Responde al usuario basándote en estos resultados. Si no encontraste nada útil, dilo.")
-    return [
-        {"role": "system", "content": SYSTEM_INSTRUCTION},
-        {"role": "user", "content": msg_content}
-    ]
+
+    # Construir lista de mensajes con system + history + user actual
+    messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+
+    # Agregar historial previo (si viene) para mantener contexto
+    # El frontend manda solo los últimos N mensajes para no saturar tokens
+    if history and isinstance(history, list):
+        for msg in history[-10:]:  # máximo últimos 10 mensajes
+            role = msg.get("role")
+            content = msg.get("content")
+            if role in ("user", "assistant") and content:
+                # Mapear 'bot' → 'assistant' (por las dudas)
+                api_role = "assistant" if role == "bot" else role
+                messages.append({"role": api_role, "content": content})
+
+    messages.append({"role": "user", "content": msg_content})
+    return messages
 
 
 def call_model(endpoint, api_key, model, messages):
@@ -203,7 +216,8 @@ def chat():
             return jsonify({"answer": "Por favor, escribe una pregunta."}), 400
         if data.get("image"):
             return jsonify({"answer": "Por ahora solo puedo leer texto."}), 400
-        messages = build_messages(user_msg)
+        history = data.get("history", [])
+        messages = build_messages(user_msg, history)
         last_error = ""
         for endpoint, key, model in MODELS_TO_TRY:
             print(f"📡 Probando modelo {model}...")
@@ -241,7 +255,8 @@ def chat_stream():
     if data.get("image"):
         return jsonify({"answer": "Por ahora solo puedo leer texto."}), 400
 
-    messages = build_messages(user_msg)
+    history = data.get("history", [])
+    messages = build_messages(user_msg, history)
 
     payload = {
         "model": ZAI_MODEL,
@@ -335,84 +350,6 @@ def chat_stream():
         }
     )
 
-import re as _re
-from urllib.parse import urljoin, urlparse
-
-@app.route('/fetch-page', methods=['POST'])
-def fetch_page():
-    """
-    Descarga una página web y la devuelve para renderizar en un iframe sandboxed.
-    - Límite de tamaño: 500 KB (para no saturar)
-    - Solo HTML (no imágenes, PDFs, etc.)
-    - Reescribe URLs relativas para que funcionen dentro del iframe
-    """
-    data = request.get_json(silent=True)
-    if not data or not data.get('url'):
-        return jsonify({"error": "Falta URL"}), 400
-
-    url = data['url'].strip()
-    if not url.startswith(('http://', 'https://')):
-        url = 'https://' + url
-
-    # Validar que sea una URL válida
-    try:
-        parsed = urlparse(url)
-        if not parsed.netloc:
-            return jsonify({"error": "URL inválida"}), 400
-    except Exception:
-        return jsonify({"error": "URL inválida"}), 400
-
-    try:
-        r = requests.get(
-            url,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml',
-                'Accept-Language': 'es-AR,es;q=0.9,en;q=0.8'
-            },
-            timeout=10,
-            stream=True
-        )
-
-        # Verificar content-type
-        content_type = r.headers.get('content-type', '')
-        if 'text/html' not in content_type and 'application/xhtml' not in content_type:
-            return jsonify({
-                "error": f"La URL no es HTML (es {content_type[:50]}). No se puede renderizar."
-            }), 400
-
-        # Límite de tamaño: 500 KB
-        content = b''
-        for chunk in r.iter_content(chunk_size=8192):
-            content += chunk
-            if len(content) > 500_000:
-                return jsonify({
-                    "error": "La página es demasiado grande (>500KB). No se puede renderizar."
-                }), 400
-
-        html = content.decode('utf-8', errors='ignore')
-
-        # Reescribir URLs relativas → absolutas (para que carguen dentro del iframe)
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
-        html = _re.sub(
-            r'(href|src)\s*=\s*["\']((?!https?:|//|mailto:|tel:|#|data:|javascript:)[^"\']+)["\']',
-            lambda m: f'{m.group(1)}="{urljoin(base_url, m.group(2))}"',
-            html
-        )
-
-        return jsonify({
-            "html": html,
-            "url": url,
-            "title": _re.search(r'<title[^>]*>([^<]+)</title>', html, _re.IGNORECASE).group(1).strip()
-                    if _re.search(r'<title[^>]*>([^<]+)</title>', html, _re.IGNORECASE) else url
-        })
-
-    except requests.exceptions.Timeout:
-        return jsonify({"error": "Timeout: el sitio tardó demasiado en responder."}), 504
-    except requests.exceptions.ConnectionError:
-        return jsonify({"error": "No se pudo conectar con el sitio."}), 502
-    except Exception as e:
-        return jsonify({"error": f"Error: {str(e)[:200]}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
