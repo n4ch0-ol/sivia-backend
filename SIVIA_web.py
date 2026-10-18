@@ -335,6 +335,84 @@ def chat_stream():
         }
     )
 
+import re as _re
+from urllib.parse import urljoin, urlparse
+
+@app.route('/fetch-page', methods=['POST'])
+def fetch_page():
+    """
+    Descarga una página web y la devuelve para renderizar en un iframe sandboxed.
+    - Límite de tamaño: 500 KB (para no saturar)
+    - Solo HTML (no imágenes, PDFs, etc.)
+    - Reescribe URLs relativas para que funcionen dentro del iframe
+    """
+    data = request.get_json(silent=True)
+    if not data or not data.get('url'):
+        return jsonify({"error": "Falta URL"}), 400
+
+    url = data['url'].strip()
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+
+    # Validar que sea una URL válida
+    try:
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            return jsonify({"error": "URL inválida"}), 400
+    except Exception:
+        return jsonify({"error": "URL inválida"}), 400
+
+    try:
+        r = requests.get(
+            url,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+                'Accept-Language': 'es-AR,es;q=0.9,en;q=0.8'
+            },
+            timeout=10,
+            stream=True
+        )
+
+        # Verificar content-type
+        content_type = r.headers.get('content-type', '')
+        if 'text/html' not in content_type and 'application/xhtml' not in content_type:
+            return jsonify({
+                "error": f"La URL no es HTML (es {content_type[:50]}). No se puede renderizar."
+            }), 400
+
+        # Límite de tamaño: 500 KB
+        content = b''
+        for chunk in r.iter_content(chunk_size=8192):
+            content += chunk
+            if len(content) > 500_000:
+                return jsonify({
+                    "error": "La página es demasiado grande (>500KB). No se puede renderizar."
+                }), 400
+
+        html = content.decode('utf-8', errors='ignore')
+
+        # Reescribir URLs relativas → absolutas (para que carguen dentro del iframe)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        html = _re.sub(
+            r'(href|src)\s*=\s*["\']((?!https?:|//|mailto:|tel:|#|data:|javascript:)[^"\']+)["\']',
+            lambda m: f'{m.group(1)}="{urljoin(base_url, m.group(2))}"',
+            html
+        )
+
+        return jsonify({
+            "html": html,
+            "url": url,
+            "title": _re.search(r'<title[^>]*>([^<]+)</title>', html, _re.IGNORECASE).group(1).strip()
+                    if _re.search(r'<title[^>]*>([^<]+)</title>', html, _re.IGNORECASE) else url
+        })
+
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "Timeout: el sitio tardó demasiado en responder."}), 504
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "No se pudo conectar con el sitio."}), 502
+    except Exception as e:
+        return jsonify({"error": f"Error: {str(e)[:200]}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
