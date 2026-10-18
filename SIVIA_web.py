@@ -1,341 +1,1037 @@
-import os
-import json
-import requests
-from flask import Flask, request, jsonify, Response
-from flask_cors import CORS
-from dotenv import load_dotenv
-load_dotenv()
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIVIA | Colegio Aprenderes 2026</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-app = Flask(__name__)
-CORS(app)
+    <meta property="og:image" content="https://n4ch0-ol.github.io/manos-unidas-aprenderes/images/sivia recuadro derecho.png"/>
+    <link rel="icon" type="image/png" href="images/sivia recuadro derecho.png">
+    <link rel="apple-touch-icon" href="images/sivia recuadro derecho.png">
 
-# --- PROVEEDORES ---
-ZAI_API_KEY = os.getenv("ZAI_API_KEY")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-CF_API_TOKEN = os.getenv("CF_API_TOKEN")
-CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID")
-ZAI_MODEL = os.getenv("ZAI_MODEL", "glm-4.6v-flash")
+    <meta name="description" content="SIVIA, IA del centro de estudiantes y el colegio Aprenderes, con gemini 3, búsqueda confiable y más."/>
+    <meta name="keywords" content="Manos Unidas, Aprenderes, centro de estudiantes, colegio Aprenderes, SIVIA, Sivia IA, sivia, ia, sivia, Sivia"/>
+    <meta name="robots" content="index, follow"/>
+    <link rel="canonical" href="https://n4ch0-ol.github.io/manos-unidas-aprenderes/sivia.html"/>
 
-MODELS_TO_TRY = []
-if ZAI_API_KEY:
-    MODELS_TO_TRY.append((
-        "https://api.z.ai/api/paas/v4/chat/completions",
-        ZAI_API_KEY,
-        ZAI_MODEL
-    ))
-if GITHUB_TOKEN:
-    MODELS_TO_TRY.append((
-        "https://models.github.ai/inference/chat/completions",
-        GITHUB_TOKEN,
-        "openai/gpt-4o-mini"
-    ))
-    MODELS_TO_TRY.append((
-        "https://models.github.ai/inference/chat/completions",
-        GITHUB_TOKEN,
-        "meta/Llama-3.3-70B-Instruct"
-    ))
-if CF_API_TOKEN and CF_ACCOUNT_ID:
-    MODELS_TO_TRY.append((
-        f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions",
-        CF_API_TOKEN,
-        "@cf/meta/llama-3.1-8b-instruct"
-    ))
+    <meta property="og:title" content="SIVIA | Colegio Aprenderes"/>
+    <meta property="og:description" content="La IA del colegio Aprenderes, con gemini 3 flash, búsqueda confiable y más."/>
+    <meta property="og:type" content="website"/>
+    <meta property="og:url" content="https://n4ch0-ol.github.io/manos-unidas-aprenderes/sivia.html"/>
 
-# --- BASE DE DATOS LOCAL ---
-try:
-    with open('knowledge_base.json', 'r', encoding='utf-8') as file:
-        data = json.load(file)
-    database_content = json.dumps(data, indent=2, ensure_ascii=False)
-except Exception as e:
-    print(f"⚠️ No se pudo cargar knowledge_base.json: {e}")
-    database_content = "No hay datos específicos."
-
-SYSTEM_INSTRUCTION = f"""
-Eres SIVIA, la IA del Centro de Estudiantes.
---- DATOS LOCALES (tu base de conocimientos, PRIORIDAD sobre cualquier dato externo) ---
-{database_content}
---- REGLAS ---
-1. Si te preguntan sobre el "Centro de Estudiantes", usa PRIMERO los DATOS LOCALES.
-2. Cuando recibas resultados de búsqueda web en el mensaje, basá tu respuesta en ellos
-   y avisá si algo parece poco confiable.
-3. Si no tenés información específica, dilo claramente. No inventes.
-4. Respondé de forma concisa, amigable y clara.
-"""
-
-# --- MAPEO RAZONAMIENTO CHINO → ESPAÑOL ---
-# Z.ai emite reasoning_content en chino. Detectamos keywords y mostramos
-# un status legible al usuario, estilo Gemini.
-STATUS_PATTERNS = [
-    ("用户",   "Entendiendo tu consulta"),
-    ("问题",   "Analizando tu pregunta"),
-    ("理解",   "Interpretando el mensaje"),
-    ("分析",   "Analizando el contexto"),
-    ("搜索",   "Buscando información"),
-    ("查找",   "Localizando datos"),
-    ("检查",   "Verificando detalles"),
-    ("数据库", "Consultando base de datos"),
-    ("上下文", "Revisando el contexto"),
-    ("组织",   "Organizando la respuesta"),
-    ("回答",   "Formulando respuesta"),
-    ("总结",   "Resumiendo"),
-    ("思考",   "Pensando"),
-    ("根据",   "Evaluando opciones"),
-    ("首先",   "Estructurando ideas"),
-    ("需要",   "Identificando necesidades"),
-    ("考虑",   "Considerando enfoques"),
-    ("计算",   "Calculando"),
-    ("对比",   "Comparando alternativas"),
-    ("确认",   "Confirmando detalles"),
-    ("准备",   "Preparando la respuesta"),
-    ("生成",   "Generando respuesta"),
-    ("引用",   "Citando fuentes"),
-    ("翻译",   "Procesando lenguaje"),
-    ("语言",   "Ajustando el tono"),
-    ("格式",   "Dando formato"),
-    ("安全",   "Revisando contenido"),
-    ("意图",   "Detectando intención"),
-    ("知识",   "Accediendo a conocimientos"),
-]
-
-
-def detect_status(reasoning_chunk):
-    """Devuelve un status en español basado en keywords chinos del reasoning."""
-    for keyword, label in STATUS_PATTERNS:
-        if keyword in reasoning_chunk:
-            return label
-    return None
-
-
-def sse_event(event, data):
-    """Formatea un evento SSE (Server-Sent Event)."""
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def web_search(query):
-    print(f"🔎 Búsqueda web: {query}")
-    try:
-        r = requests.get(
-            f"https://html.duckduckgo.com/html/?q={query}",
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
-            timeout=8
-        )
-        r.raise_for_status()
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(r.text, "html.parser")
-        snippets = []
-        for s in soup.select('.result__snippet'):
-            t = s.get_text().strip()
-            if t and len(t) > 30:
-                snippets.append(t)
-            if len(snippets) >= 3:
-                break
-        return " ".join(snippets) if snippets else "No encontré resultados específicos."
-    except Exception as e:
-        print(f"Error en búsqueda web: {e}")
-        return "Error al conectar con el motor de búsqueda."
-
-
-def build_messages(user_msg):
-    msg_content = user_msg
-    lowered = user_msg.lower()
-    triggers = ["busca web", "buscar web", "search web", "buscame", "buscá", "busca sobre"]
-    if any(t in lowered for t in triggers):
-        query = user_msg
-        for t in triggers:
-            query = query.replace(t, "")
-        result = web_search(query.strip())
-        msg_content = (f"El usuario pidió buscar en la web sobre: '{query.strip()}'. "
-                       f"Resultados obtenidos:\n{result}\n\n"
-                       f"Responde al usuario basándote en estos resultados. Si no encontraste nada útil, dilo.")
-    return [
-        {"role": "system", "content": SYSTEM_INSTRUCTION},
-        {"role": "user", "content": msg_content}
-    ]
-
-
-def call_model(endpoint, api_key, model, messages):
-    if not api_key:
-        return None, "API key no configurada"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": 1024,
-        "temperature": 0.7,
-        "thinking": {"type": "disabled"}
-    }
-    try:
-        r = requests.post(
-            endpoint,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-                "Accept-Language": "es-AR,es"
-            },
-            json=payload,
-            timeout=45
-        )
-        if r.status_code == 429:
-            return None, f"{model}: rate limit (429)"
-        if r.status_code != 200:
-            return None, f"{model}: HTTP {r.status_code} - {r.text[:200]}"
-        answer = r.json()["choices"][0]["message"]["content"]
-        return (answer if answer else None), (None if answer else f"{model}: respuesta vacía")
-    except Exception as e:
-        return None, f"{model}: {e}"
-
-
-@app.route('/', methods=['GET'])
-def home():
-    return "SIVIA ONLINE - Z.AI streaming + fallback"
-
-
-@app.route('/chat', methods=['POST'])
-def chat():
-    """Endpoint NO streaming (fallback)."""
-    if not MODELS_TO_TRY:
-        return jsonify({"answer": "Error: configurá al menos ZAI_API_KEY."}), 500
-    try:
-        data = request.get_json(silent=True)
-        if not data:
-            return jsonify({"answer": "Petición no válida."}), 400
-        user_msg = data.get("question")
-        if not user_msg:
-            return jsonify({"answer": "Por favor, escribe una pregunta."}), 400
-        if data.get("image"):
-            return jsonify({"answer": "Por ahora solo puedo leer texto."}), 400
-        messages = build_messages(user_msg)
-        last_error = ""
-        for endpoint, key, model in MODELS_TO_TRY:
-            print(f"📡 Probando modelo {model}...")
-            answer, error = call_model(endpoint, key, model, messages)
-            if answer:
-                return jsonify({"answer": answer, "model": model})
-            print(f"❌ {error}")
-            last_error = error or last_error
-        return jsonify({
-            "answer": "Lo siento, estoy sin cupo disponible por ahora. Probá de nuevo en unos minutos.",
-            "details": last_error
-        })
-    except Exception as e:
-        print(f"❌ ERROR SERVIDOR: {e}")
-        return jsonify({"answer": "Error interno del servidor."}), 500
-
-
-# --- ENDPOINT STREAMING (SSE) ---
-# Emite eventos al frontend:
-#  - status: {text: "..."}     → estado actual del razonamiento del modelo
-#  - chunk:  {text: "..."}     → fragmento de la respuesta final (va llegando token por token)
-#  - done:   {}                → terminó OK
-#  - error:  {message: "..."}  → error
-@app.route('/chat/stream', methods=['POST'])
-def chat_stream():
-    if not ZAI_API_KEY:
-        return jsonify({"answer": "Error: ZAI_API_KEY no configurada."}), 500
-
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"answer": "Petición no válida."}), 400
-    user_msg = data.get("question")
-    if not user_msg:
-        return jsonify({"answer": "Por favor, escribe una pregunta."}), 400
-    if data.get("image"):
-        return jsonify({"answer": "Por ahora solo puedo leer texto."}), 400
-
-    messages = build_messages(user_msg)
-
-    payload = {
-        "model": ZAI_MODEL,
-        "messages": messages,
-        "max_tokens": 1024,
-        "temperature": 0.7,
-        "stream": True
-        # No desactivamos thinking: queremos el reasoning_content para mostrar status
-    }
-
-    def generate():
-        try:
-            with requests.post(
-                "https://api.z.ai/api/paas/v4/chat/completions",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {ZAI_API_KEY}",
-                    "Accept-Language": "es-AR,es"
-                },
-                json=payload,
-                stream=True,
-                timeout=60
-            ) as r:
-                if r.status_code != 200:
-                    yield sse_event("error", {"message": f"HTTP {r.status_code}: {r.text[:200]}"})
-                    return
-
-                content_type = r.headers.get('content-type', '')
-
-                # Fallback: si por algún motivo la API no responde con SSE
-                if 'text/event-stream' not in content_type:
-                    try:
-                        data_json = r.json()
-                        content = data_json["choices"][0]["message"]["content"]
-                        yield sse_event("chunk", {"text": content})
-                        yield sse_event("done", {})
-                    except Exception as e:
-                        yield sse_event("error", {"message": f"Parse error: {e}"})
-                    return
-
-                # SSE parsing
-                current_status = None
-                for line in r.iter_lines():
-                    if not line:
-                        continue
-                    line = line.decode('utf-8') if isinstance(line, bytes) else line
-                    if not line.startswith('data: '):
-                        continue
-                    data_str = line[6:].strip()
-                    if data_str == '[DONE]':
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        choices = chunk.get("choices", [])
-                        if not choices:
-                            continue
-                        delta = choices[0].get("delta", {})
-
-                        # Procesar reasoning_content → traducir a status en español
-                        rc = delta.get("reasoning_content", "")
-                        if rc:
-                            new_status = detect_status(rc)
-                            if new_status and new_status != current_status:
-                                current_status = new_status
-                                yield sse_event("status", {"text": new_status})
-
-                        # Procesar content → fragmento de respuesta
-                        c = delta.get("content", "")
-                        if c:
-                            yield sse_event("chunk", {"text": c})
-
-                        # Si terminó, cortamos
-                        if choices[0].get("finish_reason") == "stop":
-                            break
-                    except json.JSONDecodeError:
-                        continue
-
-                yield sse_event("done", {})
-        except requests.exceptions.Timeout:
-            yield sse_event("error", {"message": "Timeout: el servidor tardó demasiado."})
-        except Exception as e:
-            yield sse_event("error", {"message": str(e)})
-
-    return Response(
-        generate(),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',   # desactiva buffering en nginx/proxies
-            'Connection': 'keep-alive'
+    <style>
+        :root {
+            --bg-overlay: rgba(15, 23, 42, 0.85);
+            --bg-panel: rgba(30, 41, 59, 0.55);
+            --accent: #38bdf8;
+            --accent-2: #a855f7;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --user-bubble: #2563eb;
+            --border-soft: rgba(255,255,255,0.08);
+            --border-active: rgba(56, 189, 248, 0.4);
         }
-    )
 
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+        body {
+            font-family: 'Inter', sans-serif;
+            color: var(--text-main);
+            height: 100vh;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background-image: url('images/manos_unidas_oscuro.png');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-color: #0f172a;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--bg-overlay);
+            z-index: 0;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+
+        /* --- HEADER --- */
+        header {
+            position: relative;
+            z-index: 2;
+            height: 64px;
+            border-bottom: 1px solid var(--border-soft);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+
+        .brand-area {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            height: 38px;
+            width: 38px;
+            object-fit: cover;
+            border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+
+        .brand-text {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            background: linear-gradient(90deg, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid rgba(74, 222, 128, 0.25);
+            border-radius: 20px;
+            font-size: 11px;
+            color: #4ade80;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+
+        .status-pill::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #4ade80;
+            box-shadow: 0 0 8px #4ade80;
+            animation: blink 2s ease-in-out infinite;
+        }
+
+        /* --- CHAT AREA --- */
+        .chat-container {
+            position: relative;
+            z-index: 1;
+            flex: 1;
+            overflow-y: auto;
+            padding: 32px 20px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-width: 880px;
+            width: 100%;
+            margin: 0 auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+        }
+
+        .chat-container::-webkit-scrollbar { width: 6px; }
+        .chat-container::-webkit-scrollbar-track { background: transparent; }
+        .chat-container::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, 0.3);
+            border-radius: 3px;
+        }
+
+        /* --- MESSAGES --- */
+        .message {
+            display: flex;
+            gap: 12px;
+            animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            line-height: 1.55;
+        }
+
+        .avatar {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .avatar.bot {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .avatar.user {
+            background: linear-gradient(135deg, #2563eb, #1e40af);
+            color: white;
+        }
+
+        .avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .avatar .material-icons-round {
+            font-size: 20px;
+        }
+
+        .content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .user-name {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+
+        .text-bubble {
+            font-size: 15px;
+            color: #e2e8f0;
+            background: var(--bg-panel);
+            padding: 12px 16px;
+            border-radius: 14px;
+            border: 1px solid var(--border-soft);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: inline-block;
+            max-width: 100%;
+            word-wrap: break-word;
+        }
+
+        .message.user .text-bubble {
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.85), rgba(30, 64, 175, 0.85));
+            border-color: rgba(96, 165, 250, 0.3);
+            color: white;
+        }
+
+        .text-bubble strong { color: var(--accent); font-weight: 600; }
+        .text-bubble a {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px dotted;
+            transition: color 0.2s;
+        }
+        .text-bubble a:hover { color: #7dd3fc; }
+        .text-bubble img {
+            max-width: 100%;
+            border-radius: 10px;
+            margin-top: 10px;
+            border: 1px solid rgba(255,255,255,0.2);
+            display: block;
+        }
+
+        /* --- THINKING ORBS (esfera 3D de puntos) --- */
+        .thinking-wrapper {
+            display: none;
+            align-items: center;
+            gap: 18px;
+            margin-left: 46px;
+            margin-bottom: 8px;
+            padding: 10px 0;
+        }
+        .thinking-wrapper.active { display: flex; }
+
+        .orb-scene {
+            width: 56px;
+            height: 56px;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .orb-scene svg {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: visible;
+        }
+
+        .orb-scene .link {
+            stroke: rgba(56, 189, 248, 0.35);
+            stroke-width: 0.4;
+            fill: none;
+        }
+
+        .orb-scene .link.alt {
+            stroke: rgba(168, 85, 247, 0.3);
+        }
+
+        .orb-scene .node {
+            fill: #7dd3fc;
+            filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.9));
+        }
+
+        .orb-scene .node.alt {
+            fill: #d8b4fe;
+            filter: drop-shadow(0 0 2px rgba(168, 85, 247, 0.9));
+        }
+
+        .orb-scene .core {
+            fill: url(#coreGrad);
+            opacity: 0.5;
+        }
+
+        .thinking-label {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-style: italic;
+            letter-spacing: 0.4px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .thinking-label .dots::after {
+            content: '';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        /* (animación de esfera 3D ahora gestionada por JS + SVG) */
+
+        @keyframes dots {
+            0%   { content: ''; }
+            25%  { content: '.'; }
+            50%  { content: '..'; }
+            75%  { content: '...'; }
+            100% { content: ''; }
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50%      { opacity: 0.4; }
+        }
+
+        /* --- INPUT AREA --- */
+        .input-wrapper {
+            position: relative;
+            z-index: 2;
+            padding: 14px 20px 18px;
+            background: rgba(15, 23, 42, 0.78);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border-top: 1px solid var(--border-soft);
+        }
+
+        .input-box {
+            max-width: 880px;
+            margin: 0 auto;
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid var(--border-soft);
+            border-radius: 18px;
+            padding: 8px 8px 8px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+            transition: all 0.2s ease;
+        }
+        .input-box:focus-within {
+            border-color: var(--border-active);
+            box-shadow: 0 4px 28px rgba(56, 189, 248, 0.15);
+        }
+
+        #file-upload { display: none; }
+
+        .attach-btn, .send-btn {
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 12px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+        }
+        .attach-btn:hover {
+            background: rgba(56, 189, 248, 0.12);
+            color: var(--accent);
+        }
+        .attach-btn.has-file {
+            color: #4ade80;
+            background: rgba(74, 222, 128, 0.12);
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.18), rgba(168, 85, 247, 0.18));
+            color: var(--accent);
+        }
+        .send-btn:hover {
+            transform: scale(1.05);
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.3), rgba(168, 85, 247, 0.3));
+        }
+        .send-btn:disabled {
+            opacity: 0.4;
+            cursor: default;
+            transform: none;
+        }
+
+        /* Botón STOP (visible durante la generación) */
+        .stop-btn {
+            background: rgba(239, 68, 68, 0.18);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            animation: stopPulse 1.6s ease-in-out infinite;
+        }
+        .stop-btn:hover {
+            background: rgba(239, 68, 68, 0.3);
+            color: #fecaca;
+            transform: scale(1.05);
+        }
+        .stop-btn .material-icons-round {
+            font-size: 18px;
+        }
+
+        @keyframes stopPulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            50%      { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+        }
+
+        .stop-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 6px;
+            font-size: 11px;
+            color: #94a3b8;
+            font-style: italic;
+        }
+        .stop-indicator::before {
+            content: '■';
+            color: #ef4444;
+            font-size: 9px;
+        }
+
+        .main-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 15px;
+            font-family: inherit;
+            outline: none;
+            padding: 10px 4px;
+        }
+        .main-input::placeholder { color: rgba(148, 163, 184, 0.6); }
+
+        .footer-note {
+            text-align: center;
+            font-size: 10px;
+            color: #64748b;
+            margin-top: 8px;
+            letter-spacing: 0.3px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* --- RESPONSIVE --- */
+        @media (max-width: 640px) {
+            header { padding: 0 16px; height: 56px; }
+            .brand-text { font-size: 16px; }
+            .status-pill { font-size: 10px; padding: 3px 8px; }
+            .chat-container { padding: 20px 14px; gap: 16px; }
+            .input-wrapper { padding: 12px 14px 14px; }
+            .text-bubble { font-size: 14px; padding: 10px 14px; }
+            .thinking-wrapper { margin-left: 44px; gap: 14px; }
+            .orb-scene { width: 48px; height: 48px; }
+        }
+
+        /* Preferencia de movimiento reducido (accesibilidad) */
+        @media (prefers-reduced-motion: reduce) {
+            .orb-sphere, .orb, .orb-sphere::before, .status-pill::before {
+                animation: none;
+            }
+            .orb { opacity: 0.8; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand-area">
+            <img src="images/sivia recuadro derecho.png" alt="SIVIA" class="brand-logo" onerror="this.style.display='none'">
+            <span class="brand-text">SIVIA</span>
+        </div>
+        <div class="status-pill">EN LÍNEA</div>
+    </header>
+
+    <div class="chat-container" id="chat-stream">
+
+        <!-- El chat arranca vacío. SIVIA responde cuando el usuario envía el primer mensaje. -->
+
+    </div>
+
+    <div class="thinking-wrapper" id="thinking-indicator">
+        <div class="orb-scene">
+            <svg id="orb-svg" viewBox="-28 -28 56 56" preserveAspectRatio="xMidYMid meet">
+                <defs>
+                    <radialGradient id="coreGrad">
+                        <stop offset="0%" stop-color="rgba(56,189,248,0.55)"/>
+                        <stop offset="70%" stop-color="rgba(56,189,248,0.08)"/>
+                        <stop offset="100%" stop-color="rgba(56,189,248,0)"/>
+                    </radialGradient>
+                </defs>
+                <circle class="core" cx="0" cy="0" r="12"/>
+                <g id="orb-links"></g>
+                <g id="orb-nodes"></g>
+            </svg>
+        </div>
+        <div class="thinking-label">
+            <span id="thinking-status-text">Pensando</span><span class="dots"></span>
+        </div>
+    </div>
+
+    <div class="input-wrapper">
+        <div class="input-box">
+            <label for="file-upload" class="attach-btn" id="clip-btn" title="Adjuntar imagen">
+                <span class="material-icons-round">attach_file</span>
+            </label>
+            <input type="file" id="file-upload" accept="image/*">
+
+            <input type="text" class="main-input" id="user-input" placeholder="Escribe un mensaje a SIVIA..." autocomplete="off">
+
+            <button class="send-btn" id="send-btn" onclick="handleSendClick()" title="Enviar">
+                <span class="material-icons-round" id="send-icon">send</span>
+            </button>
+        </div>
+        <div class="footer-note">SIVIA puede cometer errores. Verifica la información importante.</div>
+    </div>
+
+    <script>
+        const API_URL = "https://sivia-backend.onrender.com/chat/stream";
+        const API_URL_FALLBACK = "https://sivia-backend.onrender.com/chat";
+        const LOGO_PATH = "images/sivia recuadro derecho.png";
+
+        let currentImageBase64 = null;
+
+        // --- FASES DE RESPALDO (si el modelo no emite reasoning_content) ---
+        // Se activan por tiempo. Si llega un status real, se reemplazan.
+        const FALLBACK_PHASES = [
+            { delay: 0,    label: "Pensando" },
+            { delay: 1500, label: "Analizando contexto" },
+            { delay: 3500, label: "Procesando información" },
+            { delay: 6000, label: "Formulando respuesta" },
+            { delay: 9000, label: "Puliendo detalles" }
+        ];
+
+        // --- ESTADO GLOBAL DEL STREAMING ---
+        let isGenerating = false;
+        let currentAbortController = null;
+        let currentBotBubble = null;
+        let currentAnswerText = '';
+
+        // --- ESFERA DE ORBES CON LÍNEAS (estilo molecular) ---
+        // Puntos distribuidos con fibonacci en esfera 3D.
+        // Rotación + proyección a 2D gestionada por JS, dibujo por SVG.
+        // Líneas entre nodos cercanos = estilo "modelo molecular".
+        const ORB_COUNT = 14;
+        const ORB_RADIUS = 18;
+        const LINK_DISTANCE = 14; // distancia máxima para trazar línea entre 2 nodos
+        const NODE_R = 1.1;       // radio de cada punto (más chico = más fino)
+
+        const orbNodes = [];
+        const linksGroup = document.getElementById('orb-links');
+        const nodesGroup = document.getElementById('orb-nodes');
+
+        function buildOrbSphere() {
+            const goldenAngle = Math.PI * (1 + Math.sqrt(5));
+            // Calcular posiciones 3D de cada nodo
+            for (let i = 0; i < ORB_COUNT; i++) {
+                const phi = Math.acos(1 - 2 * (i + 0.5) / ORB_COUNT);
+                const theta = goldenAngle * i;
+                orbNodes.push({
+                    x: ORB_RADIUS * Math.sin(phi) * Math.cos(theta),
+                    y: ORB_RADIUS * Math.sin(phi) * Math.sin(theta),
+                    z: ORB_RADIUS * Math.cos(phi),
+                    alt: i % 5 === 2, // algunos nodos morados
+                    phase: Math.random() * Math.PI * 2
+                });
+            }
+            // Pre-crear elementos SVG una sola vez (mejor performance)
+            // Líneas: crear todas las posibles (N*(N-1)/2) y mostrar/ocultar según distancia
+            for (let i = 0; i < ORB_COUNT; i++) {
+                for (let j = i + 1; j < ORB_COUNT; j++) {
+                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    line.setAttribute('x1', 0);
+                    line.setAttribute('y1', 0);
+                    line.setAttribute('x2', 0);
+                    line.setAttribute('y2', 0);
+                    line.setAttribute('class', 'link' + ((orbNodes[i].alt || orbNodes[j].alt) ? ' alt' : ''));
+                    line.style.opacity = 0;
+                    orbNodes[i]['link_' + j] = line;
+                    linksGroup.appendChild(line);
+                }
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('r', NODE_R);
+                circle.setAttribute('class', 'node' + (orbNodes[i].alt ? ' alt' : ''));
+                orbNodes[i].el = circle;
+                nodesGroup.appendChild(circle);
+            }
+        }
+
+        let orbRAF = null;
+        let orbStartTime = 0;
+
+        function tickOrbs(timestamp) {
+            if (!orbStartTime) orbStartTime = timestamp;
+            const t = (timestamp - orbStartTime) / 1000;
+            const rotY = t * 0.9;            // velocidad de rotación Y
+            const rotX = 0.4 + Math.sin(t * 0.25) * 0.25; // leve oscilación en X
+            const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+            const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+
+            // Proyectar cada nodo 3D -> 2D con rotación + perspectiva simple
+            const projected = [];
+            for (let i = 0; i < ORB_COUNT; i++) {
+                const n = orbNodes[i];
+                // Rotar Y
+                let x = n.x * cosY + n.z * sinY;
+                let z = -n.x * sinY + n.z * cosY;
+                // Rotar X
+                let y = n.y * cosX - z * sinX;
+                z = n.y * sinX + z * cosX;
+                // Perspectiva (z negativo = lejos)
+                const perspective = 50;
+                const scale = perspective / (perspective + z + ORB_RADIUS);
+                projected.push({
+                    px: x * scale,
+                    py: y * scale,
+                    pz: z,
+                    scale: scale,
+                    n: n
+                });
+            }
+
+            // Actualizar nodos SVG
+            for (let i = 0; i < ORB_COUNT; i++) {
+                const p = projected[i];
+                const pulse = 0.7 + 0.6 * (0.5 + 0.5 * Math.sin(t * 3.5 + p.n.phase));
+                p.n.el.setAttribute('cx', p.px.toFixed(2));
+                p.n.el.setAttribute('cy', p.py.toFixed(2));
+                p.n.el.setAttribute('r', (NODE_R * p.scale * pulse).toFixed(2));
+                // Nodos atrás más tenues (depth fading)
+                const depthFade = (p.pz + ORB_RADIUS) / (2 * ORB_RADIUS); // 0..1
+                p.n.el.style.opacity = (0.35 + 0.65 * depthFade).toFixed(2);
+            }
+
+            // Actualizar líneas entre nodos cercanos (estilo molecular)
+            for (let i = 0; i < ORB_COUNT; i++) {
+                for (let j = i + 1; j < ORB_COUNT; j++) {
+                    const line = orbNodes[i]['link_' + j];
+                    if (!line) continue;
+                    const dx = projected[i].px - projected[j].px;
+                    const dy = projected[i].py - projected[j].py;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < LINK_DISTANCE) {
+                        // Opacidad decrece con distancia (más fuerte cuanto más cerca)
+                        const alpha = (1 - dist / LINK_DISTANCE) * 0.7;
+                        line.setAttribute('x1', projected[i].px.toFixed(2));
+                        line.setAttribute('y1', projected[i].py.toFixed(2));
+                        line.setAttribute('x2', projected[j].px.toFixed(2));
+                        line.setAttribute('y2', projected[j].py.toFixed(2));
+                        line.style.opacity = alpha.toFixed(2);
+                    } else {
+                        line.style.opacity = 0;
+                    }
+                }
+            }
+
+            orbRAF = requestAnimationFrame(tickOrbs);
+        }
+
+        function startOrbsAnim() {
+            if (orbRAF) return;
+            orbStartTime = 0;
+            orbRAF = requestAnimationFrame(tickOrbs);
+        }
+
+        function stopOrbsAnim() {
+            if (orbRAF) {
+                cancelAnimationFrame(orbRAF);
+                orbRAF = null;
+            }
+        }
+
+        buildOrbSphere();
+
+        // --- SCROLL ---
+        function scrollToBottom() {
+            const container = document.getElementById('chat-stream');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // --- FILE UPLOAD ---
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(evt) {
+                    currentImageBase64 = evt.target.result.split(',')[1];
+                    document.getElementById('clip-btn').classList.add('has-file');
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // --- THINKING INDICATOR ---
+        let fallbackTimer = null;
+        let fallbackIdx = 0;
+
+        function setThinkingStatus(text) {
+            const el = document.getElementById('thinking-status-text');
+            if (el) el.textContent = text;
+        }
+
+        function startFallbackPhases() {
+            fallbackIdx = 0;
+            setThinkingStatus(FALLBACK_PHASES[0].label);
+            let elapsed = 0;
+            fallbackTimer = setInterval(() => {
+                elapsed += 500;
+                for (let i = FALLBACK_PHASES.length - 1; i >= 0; i--) {
+                    if (elapsed >= FALLBACK_PHASES[i].delay) {
+                        if (i !== fallbackIdx) {
+                            fallbackIdx = i;
+                            // Solo cambiamos si no llegó un status real todavía
+                            // (el status real sobreescribe vía setThinkingStatus)
+                            setThinkingStatus(FALLBACK_PHASES[i].label);
+                        }
+                        break;
+                    }
+                }
+            }, 500);
+        }
+
+        function stopFallbackPhases() {
+            if (fallbackTimer) {
+                clearInterval(fallbackTimer);
+                fallbackTimer = null;
+            }
+        }
+
+        function startThinking() {
+            document.getElementById('thinking-indicator').classList.add('active');
+            startOrbsAnim();
+            startFallbackPhases();
+            scrollToBottom();
+        }
+
+        function stopThinking() {
+            document.getElementById('thinking-indicator').classList.remove('active');
+            stopOrbsAnim();
+            stopFallbackPhases();
+        }
+
+        // --- ADD MESSAGE ---
+        function addMessage(text, sender, imgData = null) {
+            const container = document.getElementById('chat-stream');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message ' + sender;
+
+            const name = sender === 'bot' ? 'SIVIA' : 'Tú';
+
+            let avatarHTML;
+            if (sender === 'bot') {
+                avatarHTML = `<img src="${LOGO_PATH}" alt="SIVIA">`;
+            } else {
+                avatarHTML = `<span class="material-icons-round">person</span>`;
+            }
+
+            let contentHTML = text;
+            if (sender === 'bot') {
+                // Markdown muy básico: **bold** y links
+                contentHTML = text
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+            }
+
+            let imgHTML = '';
+            if (sender === 'user' && imgData) {
+                imgHTML = `<img src="data:image/jpeg;base64,${imgData}" alt="imagen adjunta">`;
+            }
+
+            msgDiv.innerHTML = `
+                <div class="avatar ${sender}">${avatarHTML}</div>
+                <div class="content">
+                    <div class="user-name">${name}</div>
+                    <div class="text-bubble">${contentHTML} ${imgHTML}</div>
+                </div>
+            `;
+
+            container.appendChild(msgDiv);
+            scrollToBottom();
+        }
+                // --- LÓGICA DE ENVÍO (STREAMING SSE) ---
+        function handleSendClick() {
+            // Si está generando, el botón actúa como STOP
+            if (isGenerating) {
+                stopGeneration();
+                return;
+            }
+            handleSend();
+        }
+
+        function setGeneratingState(generating) {
+            isGenerating = generating;
+            const btn = document.getElementById('send-btn');
+            const icon = document.getElementById('send-icon');
+            const input = document.getElementById('user-input');
+            if (generating) {
+                btn.classList.add('stop-btn');
+                btn.classList.remove('send-btn');
+                btn.title = 'Detener';
+                icon.textContent = 'stop';
+                input.disabled = false; // dejamos escribir mientras genera
+            } else {
+                btn.classList.remove('stop-btn');
+                btn.classList.add('send-btn');
+                btn.title = 'Enviar';
+                icon.textContent = 'send';
+                btn.disabled = false;
+                input.disabled = false;
+            }
+        }
+
+        function stopGeneration() {
+            if (currentAbortController) {
+                currentAbortController.abort();
+                currentAbortController = null;
+            }
+            stopThinking();
+            // Dejar la respuesta parcial escrita + indicador de detención
+            if (currentBotBubble && currentAnswerText) {
+                appendStopIndicator(currentBotBubble);
+            } else if (currentBotBubble) {
+                // Si no llegó ni un chunk, sacamos la burbuja vacía
+                removeBotBubble(currentBotBubble);
+                addMessage("⏹️ Generación detenida por el usuario.", 'bot');
+            }
+            setGeneratingState(false);
+            currentBotBubble = null;
+            currentAnswerText = '';
+            document.getElementById('user-input').focus();
+        }
+
+        function appendStopIndicator(msgDiv) {
+            const content = msgDiv.querySelector('.content');
+            if (!content || content.querySelector('.stop-indicator')) return;
+            const ind = document.createElement('div');
+            ind.className = 'stop-indicator';
+            ind.textContent = 'Detenido';
+            content.appendChild(ind);
+        }
+
+        async function handleSend() {
+            const input = document.getElementById('user-input');
+            const text = input.value.trim();
+            const btn = document.getElementById('send-btn');
+
+            if (!text && !currentImageBase64) return;
+
+            // Si ya está generando, no hace nada (el click lo maneja stopGeneration)
+            if (isGenerating) return;
+
+            addMessage(text, 'user', currentImageBase64);
+
+            input.value = '';
+            document.getElementById('clip-btn').classList.remove('has-file');
+            document.getElementById('file-upload').value = '';
+
+            startThinking();
+            setGeneratingState(true);
+
+            // Crear burbuja de respuesta vacía para ir llenándola con los chunks
+            currentBotBubble = createEmptyBotBubble();
+            currentAnswerText = '';
+            currentAbortController = new AbortController();
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question: text,
+                        image: currentImageBase64
+                    }),
+                    signal: currentAbortController.signal
+                });
+
+                if (!response.ok || !response.body) {
+                    throw new Error('Respuesta no válida del servidor');
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let firstChunkArrived = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Los eventos SSE vienen separados por doble salto de línea
+                    const events = buffer.split('\n\n');
+                    buffer = events.pop(); // mantener incompleto
+
+                    for (const evt of events) {
+                        const lines = evt.split('\n');
+                        let eventType = 'message';
+                        let dataStr = '';
+                        for (const line of lines) {
+                            if (line.startsWith('event: ')) eventType = line.substring(7).trim();
+                            else if (line.startsWith('data: ')) dataStr = line.substring(6);
+                        }
+                        if (!dataStr) continue;
+
+                        let data;
+                        try { data = JSON.parse(dataStr); }
+                        catch { continue; }
+
+                        if (eventType === 'status') {
+                            // Status real del razonamiento del modelo → pisa las fases
+                            stopFallbackPhases();
+                            setThinkingStatus(data.text);
+                        } else if (eventType === 'chunk') {
+                            // Llegó un fragmento de respuesta → mostrarlo
+                            if (!firstChunkArrived) {
+                                firstChunkArrived = true;
+                                stopThinking();
+                                showBotBubble(currentBotBubble);
+                            }
+                            currentAnswerText += data.text;
+                            updateBotBubble(currentBotBubble, currentAnswerText);
+                        } else if (eventType === 'done') {
+                            if (!firstChunkArrived) {
+                                stopThinking();
+                                showBotBubble(currentBotBubble);
+                                updateBotBubble(currentBotBubble, currentAnswerText || '(Sin respuesta)');
+                            }
+                            break;
+                        } else if (eventType === 'error') {
+                            stopThinking();
+                            removeBotBubble(currentBotBubble);
+                            addMessage("⚠️ " + (data.message || 'Error del servidor.'), 'bot');
+                            break;
+                        }
+                    }
+                }
+
+                // Limpieza post-stream exitoso
+                currentAbortController = null;
+                if (isGenerating) {
+                    setGeneratingState(false);
+                }
+
+            } catch (error) {
+                currentAbortController = null;
+
+                // Si fue cancelado por el usuario, no hacer nada extra (stopGeneration ya manejó)
+                if (error.name === 'AbortError') {
+                    // Ya manejado por stopGeneration()
+                    return;
+                }
+
+                stopThinking();
+                removeBotBubble(currentBotBubble);
+                setGeneratingState(false);
+
+                // Fallback al endpoint no-streaming si el streaming falla por otra razón
+                try {
+                    const fb = await fetch(API_URL_FALLBACK, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ question: text, image: currentImageBase64 })
+                    });
+                    const d = await fb.json();
+                    addMessage(d.answer || 'Sin respuesta del servidor.', 'bot');
+                } catch (e2) {
+                    addMessage("⚠️ Error de conexión. El servidor puede estar 'durmiendo' (espera 30s) o no tienes internet.", 'bot');
+                }
+            } finally {
+                currentBotBubble = null;
+                currentAnswerText = '';
+                currentImageBase64 = null;
+                document.getElementById('user-input').focus();
+                scrollToBottom();
+            }
+        }
+
+        // --- HELPERS PARA LA BURBUJA DE RESPUESTA STREAMING ---
+        function createEmptyBotBubble() {
+            const container = document.getElementById('chat-stream');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message bot';
+            msgDiv.style.display = 'none'; // oculta hasta que llegue el primer chunk
+            msgDiv.innerHTML = `
+                <div class="avatar bot"><img src="${LOGO_PATH}" alt="SIVIA"></div>
+                <div class="content">
+                    <div class="user-name">SIVIA</div>
+                    <div class="text-bubble"></div>
+                </div>
+            `;
+            container.appendChild(msgDiv);
+            return msgDiv;
+        }
+
+        function showBotBubble(msgDiv) {
+            msgDiv.style.display = '';
+            scrollToBottom();
+        }
+
+        function removeBotBubble(msgDiv) {
+            if (msgDiv && msgDiv.parentNode) {
+                msgDiv.parentNode.removeChild(msgDiv);
+            }
+        }
+
+        function updateBotBubble(msgDiv, rawText) {
+            const bubble = msgDiv.querySelector('.text-bubble');
+            if (!bubble) return;
+            // Markdown muy básico para la respuesta en streaming
+            let html = rawText
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+            bubble.innerHTML = html;
+            scrollToBottom();
+        }
+
+        // --- EVENTS ---
+        document.getElementById('user-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                if (isGenerating) {
+                    // Si está generando, Enter también detiene (como ChatGPT)
+                    stopGeneration();
+                } else {
+                    handleSend();
+                }
+            }
+        });
+        document.getElementById('user-input').focus();
+    </script>
+</body>
+</html>
