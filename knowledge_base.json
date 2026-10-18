@@ -1,8 +1,8 @@
 {
   "metadata": {
-    "version": "1.0",
+    "version": "1.1",
     "organization": "Manos Unidas - Centro de Estudiantes",
-    "lastUpdated": "2026-01-15",
+    "lastUpdated": "2026-10-19",
     "language": "es"
   },
   "proyectos": [
@@ -10,54 +10,78 @@
       "id": "torneos",
       "nombre": "Torneos y Concursos",
       "url": "concursos.html",
-      "descripcion": "Diversos torneos para todos los gustos: videojuegos, deportes y juegos de mesa",
-      "torneos": [
-        {
-          "nombre": "Truco",
-          "emoji": "♦",
-          "descripcion": "Torneo de Truco para fomentar camaradería y astucia con este clásico infaltable",
-          "estado": "En desarrollo"
+      "descripcion": "Diversos torneos para todos los gustos: videojuegos, deportes y juegos de mesa. Organizados por estado: realizados, en proceso y en propuesta.",
+      "categorias": {
+        "realizados": {
+          "titulo": "Ya realizados",
+          "descripcion": "Torneos que ya fueron organizados y finalizados",
+          "torneos": [
+            {
+              "nombre": "Truco",
+              "emoji": "♦",
+              "descripcion": "Torneo de Truco que fomentó camaradería y astucia con este clásico infaltable. Ya fue realizado con éxito.",
+              "estado": "Finalizado"
+            }
+          ]
         },
-        {
-          "nombre": "Valorant",
-          "emoji": "🎯",
-          "descripcion": "Torneo de videojuego Valorant pensado para los amantes de la acción táctica",
-          "nota": "No se realiza dentro de la institución"
+        "en_proceso": {
+          "titulo": "Organizados o en proceso de organización",
+          "descripcion": "Torneos que estamos organizando o que tienen fecha confirmada",
+          "torneos": [
+            {
+              "nombre": "Minecraft",
+              "emoji": "⛏️",
+              "descripcion": "Concurso de construcción en servidor exclusivo basado en concursos de Globant. En proceso de organización.",
+              "objetivo": "Demostrar creatividad en construcción",
+              "estado": "En organización"
+            },
+            {
+              "nombre": "UNO",
+              "emoji": "🔴",
+              "descripcion": "Torneo de juego de mesa UNO para quienes prefieren tranquilidad sin pantallas. En proceso de organización.",
+              "nota": "Juego muy popular",
+              "estado": "En organización"
+            }
+          ]
         },
-        {
-          "nombre": "Minecraft",
-          "emoji": "⛏️",
-          "descripcion": "Concurso de construcción en servidor exclusivo basado en concursos de Globant",
-          "objetivo": "Demostrar creatividad en construcción"
-        },
-        {
-          "nombre": "Fútbol",
-          "emoji": "⚽",
-          "descripcion": "Torneo de fútbol en ambiente competitivo para todos los estudiantes",
-          "nota": "Para quienes no les gustan videojuegos"
-        },
-        {
-          "nombre": "Ajedrez",
-          "emoji": "♟️",
-          "descripcion": "Torneo de ajedrez para estrategas que quieren poner a prueba su inteligencia",
-          "objetivo": "Fomentar creatividad y habilidad"
-        },
-        {
-          "nombre": "UNO",
-          "emoji": "🔴",
-          "descripcion": "Torneo de juego de mesa UNO para quienes prefieren tranquilidad sin pantallas",
-          "nota": "Juego muy popular"
+        "propuestos": {
+          "titulo": "En propuesta",
+          "descripcion": "Torneos que estaban en las propuestas iniciales pero no sabemos si vamos a poder realizar",
+          "torneos": [
+            {
+              "nombre": "Valorant",
+              "emoji": "🎯",
+              "descripcion": "Torneo de videojuego Valorant pensado para los amantes de la acción táctica. Solo propuesta, no confirmado.",
+              "nota": "No se realiza dentro de la institución",
+              "estado": "No confirmado"
+            },
+            {
+              "nombre": "Fútbol",
+              "emoji": "⚽",
+              "descripcion": "Torneo de fútbol en ambiente competitivo para todos los estudiantes. Solo propuesta, no confirmado.",
+              "nota": "Para quienes no les gustan videojuegos",
+              "estado": "No confirmado"
+            },
+            {
+              "nombre": "Ajedrez",
+              "emoji": "♟️",
+              "descripcion": "Torneo de ajedrez para estrategas que quieren poner a prueba su inteligencia. Solo propuesta, no confirmado.",
+              "objetivo": "Fomentar creatividad y habilidad",
+              "estado": "No confirmado"
+            }
+          ]
         }
-      ]
+      }
     },
     {
       "id": "podcast",
       "nombre": "Podcast Manos Unidas",
       "url": "podcast.html",
       "emoji": "🎙️",
-      "descripcion": "Programa realizado por Manos Unidas los viernes con invitados especiales",
+      "descripcion": "Programa que vamos a realizar los viernes con invitados especiales. Aún no lo hicimos pero lo estamos planeando.",
+      "estado": "En planificación",
       "detalles": {
-        "frecuencia": "Semanalmente los viernes",
+        "frecuencia": "Semanalmente los viernes (planeado)",
         "participantes": "Alumnos y profesores invitados",
         "temas": [
           "Proyectos de alumnos invitados",
@@ -73,7 +97,8 @@
       "nombre": "Correcaminatas",
       "url": "correcaminatas.html",
       "emoji": "🏃",
-      "descripcion": "Eventos deportivos por las sierras de la ciudad promoviendo vida saludable",
+      "descripcion": "Eventos deportivos por las sierras de la ciudad promoviendo vida saludable. Creemos que no será posible realizarlas, pero sigue estando en nuestras propuestas.",
+      "estado": "Probablemente no se realice",
       "detalles": {
         "tipo": "Evento deportivo",
         "ubicacion": "Sierras de la ciudad",
@@ -92,17 +117,21 @@
       "nombre": "Proyecto Materiales",
       "url": "materiales.html",
       "emoji": "📦",
-      "descripcion": "Sistema colaborativo de inversión para compra de materiales escolares compartidos",
+      "descripcion": "Proyecto mediante el cual se proveyó material artístico a cada salón (de 1ro a 5to año). El proyecto se terminó y ya compramos la segunda tanda de materiales.",
+      "estado": "Finalizado (segunda tanda comprada)",
       "detalles": {
         "origen": "Idea implementada en 4to año",
+        "alcance": "Salones de 1ro a 5to año",
+        "tipo_material": "Material artístico para cada salón",
         "proceso": [
           "Delegado pregunta qué materiales hace falta en el salón",
           "Se identifica quiénes quieren invertir",
           "Se recauda dinero separado por salones",
-          "Se compran materiales",
+          "Se compran materiales artísticos",
           "Uso compartido entre todos los inversores del salón"
         ],
-        "beneficio": "Todos usan materiales de calidad compartidos"
+        "beneficio": "Todos los salones de 1ro a 5to cuentan con material artístico de calidad compartido",
+        "tanda_actual": "Segunda tanda ya comprada"
       }
     },
     {
@@ -110,9 +139,10 @@
       "nombre": "Pared Creativa",
       "url": "pared-creativa.html",
       "emoji": "🎨",
-      "descripcion": "Espacio creativo compartido para expresión artística de toda la comunidad",
+      "descripcion": "Espacio creativo compartido para expresión artística de toda la comunidad. Aún no lo hicimos pero lo estamos planeando.",
+      "estado": "En planificación",
       "detalles": {
-        "tipo": "Proyecto a largo plazo",
+        "tipo": "Proyecto a largo plazo (planeado)",
         "material": "Similar a pizarrón plástico - borrable y cómodo",
         "normas": "Acorde al vocabulario e institucionales",
         "importancia": "Permite libertad creativa de los alumnos"
@@ -123,7 +153,8 @@
       "nombre": "E.S.E.N.C.I.A",
       "url": "esencia.html",
       "emoji": "📚",
-      "descripcion": "Reforma del sistema educativo para mayor flexibilidad y modernización",
+      "descripcion": "Reforma del sistema educativo para mayor flexibilidad y modernización. Aún no lo implementamos pero lo estamos planeando.",
+      "estado": "En planificación",
       "detalles": {
         "tipo": "Propuesta de reforma educativa",
         "objetivo": "Hacer el sistema educativo más flexible"
@@ -132,45 +163,24 @@
   ],
   "formularios": [
     {
-      "id": "propuesta",
-      "nombre": "Propuesta de Proyecto",
-      "emoji": "💡",
-      "descripcion": "Envía tus ideas innovadoras",
-      "campos": ["nombre", "email", "mensaje"]
-    },
-    {
       "id": "sugerencia",
       "nombre": "Sugerencias",
       "emoji": "✏️",
-      "descripcion": "Ayúdanos a mejorar con tus comentarios",
+      "descripcion": "Proponé algo: ideas, proyectos, actividades o cualquier propuesta para el Centro de Estudiantes",
       "campos": ["nombre", "email", "mensaje"]
     },
     {
       "id": "problema",
       "nombre": "Reportar Problema",
       "emoji": "⚠️",
-      "descripcion": "Reporta errores o problemas técnicos",
-      "campos": ["nombre", "email", "mensaje"]
-    },
-    {
-      "id": "torneo",
-      "nombre": "Inscripción a Torneos",
-      "emoji": "🎮",
-      "descripcion": "Regístrate para participar en torneos",
+      "descripcion": "Avisanos de problemas que el Centro de Estudiantes pueda solucionar",
       "campos": ["nombre", "email", "mensaje"]
     },
     {
       "id": "sivia",
       "nombre": "Feedback SIVIA",
       "emoji": "🤖",
-      "descripcion": "Ayuda a mejorar SIVIA con tu experiencia",
-      "campos": ["nombre", "email", "mensaje"]
-    },
-    {
-      "id": "contacto",
-      "nombre": "Contacto Centro de Estudiantes",
-      "emoji": "📧",
-      "descripcion": "Envía un mensaje directo al CE",
+      "descripcion": "Reportá o comunicá algo en relación a SIVIA (bugs, sugerencias, mejoras, etc.)",
       "campos": ["nombre", "email", "mensaje"]
     }
   ],
@@ -181,35 +191,67 @@
     },
     {
       "pregunta": "¿Cuáles son los torneos disponibles?",
-      "respuesta": "Tenemos 6 torneos: Truco (♦), Valorant (🎯), Minecraft (⛏️), Fútbol (⚽), Ajedrez (♟️) y UNO (🔴). Cada uno pensado para diferentes intereses."
+      "respuesta": "Los torneos se dividen en tres categorías:\n\n1. Ya realizados: Truco (♦) — finalizado con éxito.\n\n2. En organización: Minecraft (⛏️) y UNO (🔴) — están siendo organizados.\n\n3. En propuesta (no confirmados): Valorant (🎯), Fútbol (⚽) y Ajedrez (♟️) — estaban en las propuestas iniciales pero no sabemos si vamos a poder realizarlos."
+    },
+    {
+      "pregunta": "¿El torneo de Truco ya se hizo?",
+      "respuesta": "Sí, el torneo de Truco ya fue realizado y finalizado con éxito. Fue una buena instancia para fomentar camaradería y astucia entre los participantes."
+    },
+    {
+      "pregunta": "¿Qué torneos están en proceso de organización?",
+      "respuesta": "Actualmente estamos organizando dos torneos: Minecraft (⛏️), un concurso de construcción en servidor exclusivo basado en concursos de Globant, y UNO (🔴), para quienes prefieren tranquilidad sin pantallas."
+    },
+    {
+      "pregunta": "¿Van a hacer los torneos de Valorant, Fútbol y Ajedrez?",
+      "respuesta": "Esos torneos estaban en las propuestas iniciales pero no sabemos si los vamos a poder realizar. Están en la categoría de 'En propuesta' hasta que confirmemos si es factible organizarlos."
     },
     {
       "pregunta": "¿Cuándo es el podcast?",
-      "respuesta": "El podcast de Manos Unidas se transmite todos los viernes. En él invitamos a alumnos y profesores para hablar de proyectos, consejos educativos y vida escolar."
+      "respuesta": "El podcast de Manos Unidas está planeado para transmitirse todos los viernes, pero aún no lo hemos hecho. Lo estamos planeando. En él vamos a invitar a alumnos y profesores para hablar de proyectos, consejos educativos y vida escolar."
     },
     {
       "pregunta": "¿Qué es E.S.E.N.C.I.A?",
-      "respuesta": "E.S.E.N.C.I.A es una propuesta de reforma del sistema educativo que buscamos implementar. El objetivo es hacer el sistema más flexible y adaptado a las necesidades de los estudiantes actuales."
+      "respuesta": "E.S.E.N.C.I.A es una propuesta de reforma del sistema educativo que buscamos implementar para hacerlo más flexible y adaptado a las necesidades de los estudiantes actuales. Aún no lo implementamos pero lo estamos planeando."
     },
     {
-      "pregunta": "¿Cómo participar en el Proyecto Materiales?",
-      "respuesta": "Tu delegado de curso pregunta qué materiales necesitan. Si quieres invertir, contribuyes con dinero que se usa para comprar materiales de calidad que todos en tu salón pueden usar."
+      "pregunta": "¿Cómo participo en el Proyecto Materiales?",
+      "respuesta": "El Proyecto Materiales ya se terminó: se proveyó material artístico a cada salón de 1ro a 5to año, y ya compramos la segunda tanda de materiales. Tu delegado de curso fue el encargado de preguntar qué materiales necesitaban, identificar quiénes querían invertir, recaudar el dinero y comprar los materiales artísticos para uso compartido entre todos los inversores del salón."
+    },
+    {
+      "pregunta": "¿El Proyecto Materiales sigue activo?",
+      "respuesta": "El proyecto se terminó y ya compramos la segunda tanda de materiales artísticos. Todos los salones de 1ro a 5to año cuentan con material de calidad compartido."
     },
     {
       "pregunta": "¿Dónde es la Pared Creativa?",
-      "respuesta": "La Pared Creativa es un espacio de expresión dentro de la institución. Es un pizarrón borrable donde todos pueden dibujar y escribir, respetando las normas escolares."
+      "respuesta": "La Pared Creativa es un espacio de expresión dentro de la institución que estamos planeando implementar. Será un pizarrón borrable donde todos puedan dibujar y escribir, respetando las normas escolares. Aún no está implementada."
     },
     {
       "pregunta": "¿Qué son las Correcaminatas?",
-      "respuesta": "Son eventos deportivos por las sierras de la ciudad. Puedes caminar o correr según tu ritmo. El objetivo es promover vida saludable, solidaridad y recaudar dinero."
+      "respuesta": "Son eventos deportivos propuestos para hacer por las sierras de la ciudad, donde se puede caminar o correr según el ritmo de cada uno. El objetivo era promover vida saludable, solidaridad y recaudar dinero. Sin embargo, creemos que no será posible realizarlas, aunque sigue estando en nuestras propuestas."
+    },
+    {
+      "pregunta": "¿Las Correcaminatas se van a hacer?",
+      "respuesta": "Creemos que no será posible realizar las Correcaminatas, aunque sigue estando dentro de nuestras propuestas. Si llegamos a organizarlas en el futuro, se informará por los canales oficiales."
     },
     {
       "pregunta": "¿Cómo puedo enviar una propuesta?",
-      "respuesta": "Ve a la sección Formularios y selecciona 'Propuesta de Proyecto'. Completa el formulario con tu idea y nos la revisaremos pronto."
+      "respuesta": "Ve a la sección Formularios y selecciona 'Sugerencias'. Completa el formulario con tu idea y nos la revisaremos pronto."
+    },
+    {
+      "pregunta": "¿Cómo reporto un problema?",
+      "respuesta": "Usá el formulario 'Reportar Problema' en la sección Formularios. Está pensado para que nos avises de problemas que el Centro de Estudiantes pueda solucionar."
     },
     {
       "pregunta": "¿Cómo contacto al Centro de Estudiantes?",
-      "respuesta": "Puedes usar el formulario 'Contacto CE' en la sección Formularios, o enviar un email directo. También puedes presentar tus ideas en las asambleas estudiantiles."
+      "respuesta": "Podés usar el formulario de 'Sugerencias' en la sección Formularios para comunicarte con el Centro de Estudiantes. También podés presentar tus ideas en las asambleas estudiantiles."
+    },
+    {
+      "pregunta": "¿Qué formularios hay disponibles?",
+      "respuesta": "Actualmente hay 3 formularios:\n\n1. Sugerencias (✏️): para proponer algo — ideas, proyectos, actividades o cualquier propuesta.\n\n2. Reportar Problema (⚠️): para avisar de problemas que el Centro de Estudiantes pueda solucionar.\n\n3. Feedback SIVIA (🤖): para reportar o comunicar algo en relación a SIVIA (bugs, sugerencias, mejoras)."
+    },
+    {
+      "pregunta": "¿Cómo doy feedback sobre SIVIA?",
+      "respuesta": "Usá el formulario 'Feedback SIVIA' en la sección Formularios. Está pensado para que reportes o comuniques algo en relación a SIVIA: bugs que encuentres, sugerencias de mejora, o cualquier comentario sobre tu experiencia con la IA."
     },
     {
       "pregunta": "¿Quién es SIVIA?",
@@ -239,7 +281,7 @@
     {
       "pagina": "Torneos",
       "url": "concursos.html",
-      "descripcion": "Ver todos los torneos disponibles"
+      "descripcion": "Ver todos los torneos disponibles organizados por estado"
     },
     {
       "pagina": "Beta Lab",
@@ -249,7 +291,7 @@
     {
       "pagina": "Formularios",
       "url": "forms.html",
-      "descripcion": "Enviar propuestas y feedback"
+      "descripcion": "Enviar sugerencias, reportar problemas o dar feedback sobre SIVIA"
     }
   ]
 }
