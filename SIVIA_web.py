@@ -18,14 +18,13 @@ CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID")
 # Lista de modelos de Z.ai a probar en orden (fallback automático dentro de Z.ai)
 # Cuando uno tira 1305 (sobrecarga) o 1302 (rate limit), probamos el siguiente.
 # El primero que responde OK se usa para toda esa request.
-# Para agregar modelos pagos como último recurso, descomentá las líneas de glm-5.x
 DEFAULT_ZAI_MODELS = [
     "glm-4.6v-flash",   # Visión, gratis - default
     "glm-4.5-flash",    # Texto, gratis - fallback principal
     "glm-4.7-flash",    # Texto, gratis - fallback 2 (más rápido)
     # --- Modelos pagos (muy baratos) - descomentá si querés usarlos ---
-    "glm-5.3-flash",  # $0.08 input / $0.25 output por 1M tokens
-    "glm-5.2",        # Modelo más potente, paga por uso
+    # "glm-5.3-flash",  # $0.08 input / $0.25 output por 1M tokens
+    # "glm-5.2",        # Modelo más potente, paga por uso
 ]
 _zai_env_model = os.getenv("ZAI_MODEL")
 ZAI_MODELS_TO_TRY = []
@@ -87,8 +86,6 @@ Eres SIVIA, la IA del Centro de Estudiantes.
 """
 
 # --- MAPEO RAZONAMIENTO CHINO → ESPAÑOL ---
-# Z.ai emite reasoning_content en chino. Detectamos keywords y mostramos
-# un status legible al usuario, estilo Gemini.
 STATUS_PATTERNS = [
     ("用户",   "Entendiendo tu consulta"),
     ("问题",   "Analizando tu pregunta"),
@@ -176,13 +173,11 @@ def build_messages(user_msg, history=None):
     messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
 
     # Agregar historial previo (si viene) para mantener contexto
-    # El frontend manda solo los últimos N mensajes para no saturar tokens
     if history and isinstance(history, list):
-        for msg in history[-10:]:  # máximo últimos 10 mensajes
+        for msg in history[-10:]:
             role = msg.get("role")
             content = msg.get("content")
             if role in ("user", "assistant") and content:
-                # Mapear 'bot' → 'assistant' (por las dudas)
                 api_role = "assistant" if role == "bot" else role
                 messages.append({"role": api_role, "content": content})
 
@@ -260,11 +255,6 @@ def chat():
 
 
 # --- ENDPOINT STREAMING (SSE) ---
-# Emite eventos al frontend:
-#  - status: {text: "..."}     → estado actual del razonamiento del modelo
-#  - chunk:  {text: "..."}     → fragmento de la respuesta final (va llegando token por token)
-#  - done:   {}                → terminó OK
-#  - error:  {message: "..."}  → error
 @app.route('/chat/stream', methods=['POST'])
 def chat_stream():
     if not ZAI_API_KEY:
@@ -290,7 +280,6 @@ def chat_stream():
             "max_tokens": 1024,
             "temperature": 0.7,
             "stream": True
-            # No desactivamos thinking: queremos el reasoning_content para mostrar status
         }
 
     def generate():
@@ -300,7 +289,6 @@ def chat_stream():
         # Iterar sobre todos los modelos de Z.ai disponibles
         for model_idx, model in enumerate(ZAI_MODELS_TO_TRY):
             try:
-                # Avisar al frontend que estamos probando otro modelo (excepto en el primero)
                 if model_idx > 0:
                     yield sse_event("status", {"text": f"Probando modelo alternativo..."})
                     print(f"🔄 Modelo #{model_idx + 1}: probando {model}...")
@@ -316,9 +304,6 @@ def chat_stream():
                     stream=True,
                     timeout=60
                 ) as r:
-
-                    # Si la request falla con 429 u otro error antes de empezar a streamear,
-                    # intentamos con el siguiente modelo
                     if r.status_code != 200:
                         error_body = r.text[:500]
                         error_code = None
@@ -330,11 +315,9 @@ def chat_stream():
 
                         last_error_msg = f"HTTP {r.status_code} ({model}): {error_body[:150]}"
 
-                        # Si es un error reintentable (1305, 1302, etc.), probamos otro modelo
                         if error_code in RETRYABLE_ERROR_CODES:
                             print(f"⚠️ Modelo {model} saturado (código {error_code}). Probando siguiente...")
                             continue
-                        # Si es error no reintentable (1308, 1316, etc.), no tiene sentido seguir
                         else:
                             yield sse_event("error", {
                                 "message": f"Error de Z.ai (código {error_code}): {error_body[:150]}"
@@ -343,7 +326,6 @@ def chat_stream():
 
                     content_type = r.headers.get('content-type', '')
 
-                    # Fallback: si por algún motivo la API no responde con SSE
                     if 'text/event-stream' not in content_type:
                         try:
                             data_json = r.json()
@@ -376,7 +358,6 @@ def chat_stream():
                                 continue
                             delta = choices[0].get("delta", {})
 
-                            # Procesar reasoning_content → traducir a status en español
                             rc = delta.get("reasoning_content", "")
                             if rc:
                                 new_status = detect_status(rc)
@@ -385,26 +366,22 @@ def chat_stream():
                                     model_emitted_status = True
                                     yield sse_event("status", {"text": new_status})
 
-                            # Procesar content → fragmento de respuesta
                             c = delta.get("content", "")
                             if c:
                                 any_chunk_emitted = True
                                 model_emitted_any_chunk = True
                                 yield sse_event("chunk", {"text": c})
 
-                            # Si terminó, cortamos
                             if choices[0].get("finish_reason") == "stop":
                                 break
                         except json.JSONDecodeError:
                             continue
 
-                    # Si este modelo emitió al menos un chunk o un status, damos por buena la request
                     if model_emitted_any_chunk or model_emitted_status:
                         yield sse_event("done", {})
                         print(f"✅ Modelo {model} respondió OK")
                         return
                     else:
-                        # El modelo no emitió nada útil → probamos el siguiente
                         print(f"⚠️ Modelo {model} no emitió chunks. Probando siguiente...")
                         last_error_msg = f"Modelo {model} no respondió contenido"
                         continue
@@ -418,9 +395,7 @@ def chat_stream():
                 print(f"❌ Error con {model}: {e}. Probando siguiente...")
                 continue
 
-        # Si llegamos acá, todos los modelos fallaron
         if any_chunk_emitted:
-            # Ya habíamos emitido algo, cerramos el stream normalmente
             yield sse_event("done", {})
         else:
             yield sse_event("error", {
@@ -432,11 +407,13 @@ def chat_stream():
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',   # desactiva buffering en nginx/proxies
+            'X-Accel-Buffering': 'no',
             'Connection': 'keep-alive'
         }
     )
 
+
+# --- ENDPOINT FETCH-PAGE (para iframe sandboxed de URLs) ---
 import re as _re
 from urllib.parse import urljoin, urlparse
 
@@ -507,6 +484,7 @@ def fetch_page():
         return jsonify({"error": "No se pudo conectar con el sitio."}), 502
     except Exception as e:
         return jsonify({"error": f"Error: {str(e)[:200]}"}), 500
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
