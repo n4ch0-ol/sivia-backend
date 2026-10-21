@@ -25,8 +25,8 @@ DEFAULT_ZAI_MODELS = [
     "glm-4.5-flash",    # Texto, gratis - fallback principal
     "glm-4.7-flash",    # Texto, gratis - fallback 2 (más rápido)
     # --- Modelos pagos (muy baratos) - descomentá si querés usarlos ---
-    # "glm-5.3-flash",  # $0.08 input / $0.25 output por 1M tokens
-    # "glm-5.2",        # Modelo más potente, paga por uso
+    "glm-5.3-flash",  # $0.08 input / $0.25 output por 1M tokens
+    "glm-5.2",        # Modelo más potente, paga por uso
 ]
 _zai_env_model = os.getenv("ZAI_MODEL")
 ZAI_MODELS_TO_TRY = []
@@ -470,7 +470,7 @@ def chat_stream():
             try:
                 # Avisar al frontend que estamos probando otro modelo (excepto en el primero)
                 if model_idx > 0:
-                    yield sse_event("status", {"text": f"Probando modelo alternativo..."})
+                    yield sse_event("status", {"text": f"Probando modelo alternativo"})
                     print(f"🔄 Modelo #{model_idx + 1}: probando {model}...")
 
                 with requests.post(
