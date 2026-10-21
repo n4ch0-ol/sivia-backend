@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import requests
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
@@ -18,6 +19,7 @@ CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID")
 # Lista de modelos de Z.ai a probar en orden (fallback automático dentro de Z.ai)
 # Cuando uno tira 1305 (sobrecarga) o 1302 (rate limit), probamos el siguiente.
 # El primero que responde OK se usa para toda esa request.
+# Para agregar modelos pagos como último recurso, descomentá las líneas de glm-5.x
 DEFAULT_ZAI_MODELS = [
     "glm-4.6v-flash",   # Visión, gratis - default
     "glm-4.5-flash",    # Texto, gratis - fallback principal
@@ -86,6 +88,8 @@ Eres SIVIA, la IA del Centro de Estudiantes.
 """
 
 # --- MAPEO RAZONAMIENTO CHINO → ESPAÑOL ---
+# Z.ai emite reasoning_content en chino. Detectamos keywords y mostramos
+# un status legible al usuario, estilo Gemini.
 STATUS_PATTERNS = [
     ("用户",   "Entendiendo tu consulta"),
     ("问题",   "Analizando tu pregunta"),
@@ -127,6 +131,125 @@ def detect_status(reasoning_chunk):
     return None
 
 
+# --- DETECCIÓN AUTOMÁTICA DE BÚSQUEDA WEB ---
+# Si la pregunta parece requerir info actualizada, hacer web search automáticamente
+# sin que el usuario tenga que decir "busca web"
+WEB_SEARCH_TRIGGERS = [
+    # Eventos/fechas recientes
+    r'\b(20\d{2})\b',  # cualquier año 20XX
+    r'\b(hoy|ayer|mañana|anteayer)\b',
+    r'\b(este\s+(año|mes|semestre|trimestre))\b',
+    r'\b(\u00faltim[oa]s?\s+\w+)',
+    r'\b(recent[ae]s?|nuev[oa]s?|actual(?:es|izado)?)\b',
+    # Preguntas sobre actualidad
+    r'\b(que\s+paso|qu\u00e9\s+pas\u00f3|que\s+esta\s+pasando|qu\u00e9\s+est\u00e1\s+pasando)\b',
+    r'\b(noticias?|noticia)\b',
+    r'\b(ultima\s+hora|última\s+hora)\b',
+    r'\b(actualidad)\b',
+    # Preguntas sobre personas/eventos vivos
+    r'\b(quien\s+es|qui\u00e9n\s+es)\b.*\b(hoy|ahora|actual)\b',
+    # Comparaciones de productos/precios
+    r'\b(cuanto\s+cuesta|cu\u00e1nto\s+cuesta|precio|precios)\b',
+    r'\b(mejor\s+\w+\s+(?:del|de\s+la)\s+(?:mundo|mercado|actual))\b',
+    # Cosas que cambian
+    r'\b(resultados?\s+(?:del|de))\b',
+    r'\b(clima|temperatura|pronostico|pron\u00f3stico)\b',
+    r'\b(dolar|d\u00f3lar|euro|cotizacion|cotizaci\u00f3n)\b',
+]
+
+# Cosas que NO deberían disparar búsqueda (aunque matcheen un trigger)
+NO_SEARCH_KEYWORDS = [
+    'que es', 'qu\u00e9 es', 'que significa', 'qu\u00e9 significa',
+    'definicion', 'definici\u00f3n', 'concepto', 'explicame', 'expl\u00edcame',
+    'como funciona', 'c\u00f3mo funciona', 'cuando se creo', 'cu\u00e1ndo se cre\u00f3',
+    # Cosas del colegio (siempre se responden con knowledge base)
+    'manos unidas', 'sivia', 'colegio aprenderes', 'aprenderes',
+    'torneo', 'podcast', 'pared creativa', 'correcaminatas',
+    'e.s.e.n.c.i.a', 'esencia', 'proyecto materiales'
+]
+
+
+def should_auto_search(user_msg):
+    """Detecta si una pregunta debería disparar web search automático."""
+    msg_lower = user_msg.lower()
+
+    # Si menciona cosas del colegio, NO buscar (usar knowledge base)
+    for keyword in NO_SEARCH_KEYWORDS:
+        if keyword in msg_lower:
+            return False
+
+    # Si ya tiene trigger explícito de búsqueda, no hacer doble
+    triggers = ["busca web", "buscar web", "search web", "buscame", "buscá", "busca sobre"]
+    if any(t in msg_lower for t in triggers):
+        return False
+
+    # Si matchea algún trigger de búsqueda web
+    for pattern in WEB_SEARCH_TRIGGERS:
+        if re.search(pattern, msg_lower, re.IGNORECASE):
+            return True
+
+    return False
+
+
+# --- CACHE DE PREGUNTAS FRECUENTES ---
+# Cachea respuestas exitosas para responder instantáneo a preguntas repetidas.
+# La clave es hash(message + history_últimos_3) para no cachear respuestas contextuales.
+# TTL: 24 horas. Limpieza automática cada 1 hora.
+import hashlib
+import time
+from collections import OrderedDict
+
+RESPONSE_CACHE = OrderedDict()
+CACHE_TTL = 24 * 60 * 60  # 24 horas en segundos
+CACHE_MAX_SIZE = 200  # máximo 200 respuestas cacheadas
+CACHE_CLEANUP_INTERVAL = 60 * 60  # limpiar cada 1 hora
+_last_cache_cleanup = time.time()
+
+
+def get_cache_key(user_msg, history):
+    """Genera una clave de cache basada en el mensaje + últimos 3 mensajes de historial."""
+    # Solo considerar últimos 3 mensajes de historial para contexto mínimo
+    recent_history = (history or [])[-3:]
+    history_str = json.dumps(recent_history, ensure_ascii=False, sort_keys=True)
+    combined = user_msg + "||" + history_str
+    return hashlib.sha256(combined.encode('utf-8')).hexdigest()
+
+
+def get_cached_response(cache_key):
+    """Devuelve la respuesta cacheada si existe y no expiró."""
+    global _last_cache_cleanup
+    now = time.time()
+
+    # Limpieza periódica de entradas expiradas
+    if now - _last_cache_cleanup > CACHE_CLEANUP_INTERVAL:
+        expired_keys = [k for k, v in RESPONSE_CACHE.items() if now - v['timestamp'] > CACHE_TTL]
+        for k in expired_keys:
+            del RESPONSE_CACHE[k]
+        _last_cache_cleanup = now
+
+    if cache_key in RESPONSE_CACHE:
+        entry = RESPONSE_CACHE[cache_key]
+        if now - entry['timestamp'] < CACHE_TTL:
+            # Mover al final (LRU)
+            RESPONSE_CACHE.move_to_end(cache_key)
+            return entry['response']
+        else:
+            del RESPONSE_CACHE[cache_key]
+    return None
+
+
+def set_cached_response(cache_key, response):
+    """Guarda una respuesta en el cache."""
+    now = time.time()
+    RESPONSE_CACHE[cache_key] = {
+        'response': response,
+        'timestamp': now
+    }
+    # Si el cache está lleno, eliminar el más viejo (LRU)
+    while len(RESPONSE_CACHE) > CACHE_MAX_SIZE:
+        RESPONSE_CACHE.popitem(last=False)
+
+
 def sse_event(event, data):
     """Formatea un evento SSE (Server-Sent Event)."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -156,28 +279,61 @@ def web_search(query):
         return "Error al conectar con el motor de búsqueda."
 
 
-def build_messages(user_msg, history=None):
+def build_messages(user_msg, history=None, memory=None):
     msg_content = user_msg
     lowered = user_msg.lower()
+
+    # 1) Trigger explícito de búsqueda (mantiene comportamiento original)
     triggers = ["busca web", "buscar web", "search web", "buscame", "buscá", "busca sobre"]
-    if any(t in lowered for t in triggers):
+    explicit_search = any(t in lowered for t in triggers)
+
+    # 2) Detección automática de búsqueda (sin necesidad de "busca")
+    auto_search = should_auto_search(user_msg)
+
+    if explicit_search or auto_search:
         query = user_msg
         for t in triggers:
             query = query.replace(t, "")
         result = web_search(query.strip())
-        msg_content = (f"El usuario pidió buscar en la web sobre: '{query.strip()}'. "
-                       f"Resultados obtenidos:\n{result}\n\n"
-                       f"Responde al usuario basándote en estos resultados. Si no encontraste nada útil, dilo.")
+        if explicit_search:
+            msg_content = (f"El usuario pidió buscar en la web sobre: '{query.strip()}'. "
+                           f"Resultados obtenidos:\n{result}\n\n"
+                           f"Responde al usuario basándote en estos resultados. Si no encontraste nada útil, dilo.")
+        else:
+            # Búsqueda automática: el usuario no pidió buscar pero parece necesitar info actual
+            msg_content = (f"Pregunta del usuario: '{user_msg}'\n\n"
+                           f"Información obtenida de una búsqueda web automática (el usuario no sabe que se hizo):\n{result}\n\n"
+                           f"Respondé al usuario usando tu conocimiento + estos resultados. Si la búsqueda no aportó nada útil, "
+                           f"respondé con tu conocimiento. No menciones que buscaste en internet a menos que sea relevante.")
+        print(f"🔎 Búsqueda {'explícita' if explicit_search else 'automática'}: {query.strip()}")
+
+    # Construir system prompt (incluye knowledge base + memoria del usuario si hay)
+    system_content = SYSTEM_INSTRUCTION
+
+    # === INJECTAR MEMORIA PERSISTENTE DEL USUARIO ===
+    if memory and isinstance(memory, list) and len(memory) > 0:
+        memory_text = "\n".join(f"- {m}" for m in memory if m and isinstance(m, str))
+        if memory_text:
+            system_content += f"""
+
+--- MEMORIA SOBRE EL USUARIO (info que el usuario te pidió recordar) ---
+{memory_text}
+
+IMPORTANTE: Usá esta información para personalizar tus respuestas. Si el usuario te contó que es de 5to año, mencioná eso si es relevante. Si te dijo que le interesa el podcast, usalo. NO repitas la memoria literalmente, solo usala como contexto.
+"""
+        print(f"🧠 Memoria inyectada: {len(memory)} entradas")
 
     # Construir lista de mensajes con system + history + user actual
-    messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+    messages = [{"role": "system", "content": system_content}]
 
     # Agregar historial previo (si viene) para mantener contexto
+    # El frontend manda solo los últimos N mensajes para no saturar tokens
     if history and isinstance(history, list):
-        for msg in history[-10:]:
+        for msg in history[-10:]:  # máximo últimos 10 mensajes
             role = msg.get("role")
             content = msg.get("content")
             if role in ("user", "assistant") and content:
+                # Mapear 'bot' → 'assistant' (por las dudas)
                 api_role = "assistant" if role == "bot" else role
                 messages.append({"role": api_role, "content": content})
 
@@ -236,7 +392,8 @@ def chat():
         if data.get("image"):
             return jsonify({"answer": "Por ahora solo puedo leer texto."}), 400
         history = data.get("history", [])
-        messages = build_messages(user_msg, history)
+        memory = data.get("memory", [])
+        messages = build_messages(user_msg, history, memory)
         last_error = ""
         for endpoint, key, model in MODELS_TO_TRY:
             print(f"📡 Probando modelo {model}...")
@@ -255,6 +412,11 @@ def chat():
 
 
 # --- ENDPOINT STREAMING (SSE) ---
+# Emite eventos al frontend:
+#  - status: {text: "..."}     → estado actual del razonamiento del modelo
+#  - chunk:  {text: "..."}     → fragmento de la respuesta final (va llegando token por token)
+#  - done:   {}                → terminó OK
+#  - error:  {message: "..."}  → error
 @app.route('/chat/stream', methods=['POST'])
 def chat_stream():
     if not ZAI_API_KEY:
@@ -270,7 +432,8 @@ def chat_stream():
         return jsonify({"answer": "Por ahora solo puedo leer texto."}), 400
 
     history = data.get("history", [])
-    messages = build_messages(user_msg, history)
+    memory = data.get("memory", [])
+    messages = build_messages(user_msg, history, memory)
 
     # Payload base (el modelo se setea por cada intento)
     def make_payload(model):
@@ -280,15 +443,32 @@ def chat_stream():
             "max_tokens": 1024,
             "temperature": 0.7,
             "stream": True
+            # No desactivamos thinking: queremos el reasoning_content para mostrar status
         }
 
     def generate():
+        # === CACHE CHECK ===
+        # Antes de llamar al modelo, verificar si tenemos la respuesta cacheada
+        cache_key = get_cache_key(user_msg, history)
+        cached = get_cached_response(cache_key)
+        if cached:
+            print(f"⚡ Cache HIT! Respondiendo instantáneo")
+            yield sse_event("status", {"text": "Respuesta cacheada"})
+            # Simular streaming: dividir la respuesta en chunks de ~20 chars
+            chunk_size = 20
+            for i in range(0, len(cached), chunk_size):
+                yield sse_event("chunk", {"text": cached[i:i+chunk_size]})
+            yield sse_event("done", {"cached": True})
+            return
+
         last_error_msg = None
         any_chunk_emitted = False
+        full_response_for_cache = ""  # para guardar en cache al final
 
         # Iterar sobre todos los modelos de Z.ai disponibles
         for model_idx, model in enumerate(ZAI_MODELS_TO_TRY):
             try:
+                # Avisar al frontend que estamos probando otro modelo (excepto en el primero)
                 if model_idx > 0:
                     yield sse_event("status", {"text": f"Probando modelo alternativo..."})
                     print(f"🔄 Modelo #{model_idx + 1}: probando {model}...")
@@ -304,6 +484,9 @@ def chat_stream():
                     stream=True,
                     timeout=60
                 ) as r:
+
+                    # Si la request falla con 429 u otro error antes de empezar a streamear,
+                    # intentamos con el siguiente modelo
                     if r.status_code != 200:
                         error_body = r.text[:500]
                         error_code = None
@@ -315,9 +498,11 @@ def chat_stream():
 
                         last_error_msg = f"HTTP {r.status_code} ({model}): {error_body[:150]}"
 
+                        # Si es un error reintentable (1305, 1302, etc.), probamos otro modelo
                         if error_code in RETRYABLE_ERROR_CODES:
                             print(f"⚠️ Modelo {model} saturado (código {error_code}). Probando siguiente...")
                             continue
+                        # Si es error no reintentable (1308, 1316, etc.), no tiene sentido seguir
                         else:
                             yield sse_event("error", {
                                 "message": f"Error de Z.ai (código {error_code}): {error_body[:150]}"
@@ -326,6 +511,7 @@ def chat_stream():
 
                     content_type = r.headers.get('content-type', '')
 
+                    # Fallback: si por algún motivo la API no responde con SSE
                     if 'text/event-stream' not in content_type:
                         try:
                             data_json = r.json()
@@ -358,6 +544,7 @@ def chat_stream():
                                 continue
                             delta = choices[0].get("delta", {})
 
+                            # Procesar reasoning_content → traducir a status en español
                             rc = delta.get("reasoning_content", "")
                             if rc:
                                 new_status = detect_status(rc)
@@ -366,22 +553,31 @@ def chat_stream():
                                     model_emitted_status = True
                                     yield sse_event("status", {"text": new_status})
 
+                            # Procesar content → fragmento de respuesta
                             c = delta.get("content", "")
                             if c:
                                 any_chunk_emitted = True
                                 model_emitted_any_chunk = True
+                                full_response_for_cache += c
                                 yield sse_event("chunk", {"text": c})
 
+                            # Si terminó, cortamos
                             if choices[0].get("finish_reason") == "stop":
                                 break
                         except json.JSONDecodeError:
                             continue
 
+                    # Si este modelo emitió al menos un chunk o un status, damos por buena la request
                     if model_emitted_any_chunk or model_emitted_status:
+                        # Guardar en cache si la respuesta es útil (mínimo 20 chars)
+                        if len(full_response_for_cache.strip()) > 20:
+                            set_cached_response(cache_key, full_response_for_cache)
+                            print(f"💾 Respuesta guardada en cache ({len(full_response_for_cache)} chars)")
                         yield sse_event("done", {})
                         print(f"✅ Modelo {model} respondió OK")
                         return
                     else:
+                        # El modelo no emitió nada útil → probamos el siguiente
                         print(f"⚠️ Modelo {model} no emitió chunks. Probando siguiente...")
                         last_error_msg = f"Modelo {model} no respondió contenido"
                         continue
@@ -395,7 +591,9 @@ def chat_stream():
                 print(f"❌ Error con {model}: {e}. Probando siguiente...")
                 continue
 
+        # Si llegamos acá, todos los modelos fallaron
         if any_chunk_emitted:
+            # Ya habíamos emitido algo, cerramos el stream normalmente
             yield sse_event("done", {})
         else:
             yield sse_event("error", {
@@ -407,7 +605,7 @@ def chat_stream():
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no',
+            'X-Accel-Buffering': 'no',   # desactiva buffering en nginx/proxies
             'Connection': 'keep-alive'
         }
     )
@@ -419,6 +617,12 @@ from urllib.parse import urljoin, urlparse
 
 @app.route('/fetch-page', methods=['POST'])
 def fetch_page():
+    """
+    Descarga una página web y la devuelve para renderizar en un iframe sandboxed.
+    - Límite de tamaño: 500 KB (para no saturar)
+    - Solo HTML (no imágenes, PDFs, etc.)
+    - Reescribe URLs relativas para que funcionen dentro del iframe
+    """
     data = request.get_json(silent=True)
     if not data or not data.get('url'):
         return jsonify({"error": "Falta URL"}), 400
@@ -462,6 +666,7 @@ def fetch_page():
 
         html = content.decode('utf-8', errors='ignore')
 
+        # Reescribir URLs relativas → absolutas (para que carguen dentro del iframe)
         base_url = f"{parsed.scheme}://{parsed.netloc}"
         html = _re.sub(
             r'(href|src)\s*=\s*["\']((?!https?:|//|mailto:|tel:|#|data:|javascript:)[^"\']+)["\']',
