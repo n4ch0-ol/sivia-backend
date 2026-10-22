@@ -25,8 +25,8 @@ DEFAULT_ZAI_MODELS = [
     "glm-4.5-flash",    # Texto, gratis - fallback principal
     "glm-4.7-flash",    # Texto, gratis - fallback 2 (más rápido)
     # --- Modelos pagos (muy baratos) - descomentá si querés usarlos ---
-    "glm-5.3-flash",  # $0.08 input / $0.25 output por 1M tokens
-    "glm-5.2",        # Modelo más potente, paga por uso
+    # "glm-5.3-flash",  # $0.08 input / $0.25 output por 1M tokens
+    # "glm-5.2",        # Modelo más potente, paga por uso
 ]
 _zai_env_model = os.getenv("ZAI_MODEL")
 ZAI_MODELS_TO_TRY = []
@@ -189,6 +189,89 @@ def should_auto_search(user_msg):
             return True
 
     return False
+
+
+# --- SMART ROUTING: elige el modelo más rápido disponible ---
+# Mantiene un "score" de cada modelo basado en:
+#   - Latencia observada (cuánto tarda en responder)
+#   - Tasa de éxito (cuántas veces respondió OK vs falló)
+# El modelo con mejor score se usa como principal.
+# Si falla 3 veces seguidas, se "tira" (cooldown 5 min) y se usa el siguiente.
+
+import time as _time
+
+class ModelHealth:
+    def __init__(self, name):
+        self.name = name
+        self.last_latency = 2.0       # segundos (default optimista)
+        self.success_count = 0
+        self.fail_count = 0
+        self.consecutive_fails = 0
+        self.cooldown_until = 0       # timestamp hasta el cual no usarlo
+        self.last_used = 0
+
+    def score(self):
+        """Mayor score = mejor modelo para usar ahora."""
+        now = _time.time()
+        # Si está en cooldown, score bajísimo
+        if now < self.cooldown_until:
+            return -1000
+        # Tasa de éxito (con suavizado: arranca en 0.5)
+        total = self.success_count + self.fail_count
+        success_rate = (self.success_count + 1) / (total + 2)  # Laplace smoothing
+        # Score = éxito alto + latencia baja + evitar modelos recientemente fallados
+        latency_score = max(0, 5.0 - self.last_latency)  # 5s = 0 puntos, 0s = 5 puntos
+        return success_rate * 10 + latency_score - (self.consecutive_fails * 3)
+
+    def record_success(self, latency):
+        self.success_count += 1
+        self.consecutive_fails = 0
+        # Actualizar latencia con media móvil exponencial
+        self.last_latency = (self.last_latency * 0.7) + (latency * 0.3)
+        self.last_used = _time.time()
+
+    def record_failure(self):
+        self.fail_count += 1
+        self.consecutive_fails += 1
+        # Si falla 3 veces seguidas, cooldown de 5 min
+        if self.consecutive_fails >= 3:
+            self.cooldown_until = _time.time() + 300  # 5 minutos
+            print(f"⚠️ Modelo {self.name} puesto en cooldown 5 min ({self.consecutive_fails} fallos seguidos)")
+
+    def is_available(self):
+        return _time.time() >= self.cooldown_until
+
+    def __repr__(self):
+        return f"<ModelHealth {self.name} score={self.score():.2f} success={self.success_count} fail={self.fail_count} latency={self.last_latency:.2f}s>"
+
+
+# Inicializar health tracking para todos los modelos configurados
+MODEL_HEALTH = {}
+for _m in DEFAULT_ZAI_MODELS:
+    MODEL_HEALTH[_m] = ModelHealth(_m)
+# Si el modelo env override no está en la lista, también lo trackeamos
+if _zai_env_model and _zai_env_model not in MODEL_HEALTH:
+    MODEL_HEALTH[_zai_env_model] = ModelHealth(_zai_env_model)
+
+
+def get_best_model():
+    """Devuelve el modelo con mejor score que esté disponible."""
+    available = [(name, h) for name, h in MODEL_HEALTH.items() if h.is_available()]
+    if not available:
+        # Todos en cooldown → usar el default igualmente
+        return ZAI_MODELS_TO_TRY[0] if ZAI_MODELS_TO_TRY else "glm-4.5-flash"
+    # Ordenar por score descendente
+    available.sort(key=lambda x: x[1].score(), reverse=True)
+    best = available[0][0]
+    return best
+
+
+def print_model_health():
+    """Para debugging: imprime el estado de todos los modelos."""
+    print("📊 Estado de modelos:")
+    for name, h in MODEL_HEALTH.items():
+        cooldown_tag = " [COOLDOWN]" if not h.is_available() else ""
+        print(f"   {name}: score={h.score():.2f} success={h.success_count} fail={h.fail_count} latency={h.last_latency:.2f}s{cooldown_tag}")
 
 
 # --- CACHE DE PREGUNTAS FRECUENTES ---
@@ -463,15 +546,35 @@ def chat_stream():
 
         last_error_msg = None
         any_chunk_emitted = False
-        full_response_for_cache = ""  # para guardar en cache al final
+        full_response_for_cache = ""
 
-        # Iterar sobre todos los modelos de Z.ai disponibles
-        for model_idx, model in enumerate(ZAI_MODELS_TO_TRY):
+        # === SMART ROUTING ===
+        # Probar máximo 2 modelos: el mejor primero, y si falla, el siguiente mejor.
+        # NO iterar sobre todos — solo 2 intentos máx.
+        max_attempts = 2
+        tried_models = set()
+
+        for attempt in range(max_attempts):
+            # Elegir el mejor modelo disponible que no hayamos probado
+            model = None
+            for candidate, _ in sorted(
+                [(m, MODEL_HEALTH[m].score()) for m in MODEL_HEALTH if m not in tried_models and MODEL_HEALTH[m].is_available()],
+                key=lambda x: x[1], reverse=True
+            ):
+                model = candidate
+                break
+
+            if not model:
+                # No hay más modelos disponibles, salir
+                break
+
+            tried_models.add(model)
+            attempt_start = _time.time()
+
             try:
-                # Avisar al frontend que estamos probando otro modelo (excepto en el primero)
-                if model_idx > 0:
-                    yield sse_event("status", {"text": f"Probando modelo alternativo"})
-                    print(f"🔄 Modelo #{model_idx + 1}: probando {model}...")
+                if attempt > 0:
+                    yield sse_event("status", {"text": "Probando modelo alternativo"})
+                    print(f"🔄 Intento {attempt + 1}: probando {model}...")
 
                 with requests.post(
                     ZAI_ENDPOINT,
@@ -485,8 +588,6 @@ def chat_stream():
                     timeout=60
                 ) as r:
 
-                    # Si la request falla con 429 u otro error antes de empezar a streamear,
-                    # intentamos con el siguiente modelo
                     if r.status_code != 200:
                         error_body = r.text[:500]
                         error_code = None
@@ -498,12 +599,12 @@ def chat_stream():
 
                         last_error_msg = f"HTTP {r.status_code} ({model}): {error_body[:150]}"
 
-                        # Si es un error reintentable (1305, 1302, etc.), probamos otro modelo
                         if error_code in RETRYABLE_ERROR_CODES:
                             print(f"⚠️ Modelo {model} saturado (código {error_code}). Probando siguiente...")
+                            MODEL_HEALTH[model].record_failure()
                             continue
-                        # Si es error no reintentable (1308, 1316, etc.), no tiene sentido seguir
                         else:
+                            MODEL_HEALTH[model].record_failure()
                             yield sse_event("error", {
                                 "message": f"Error de Z.ai (código {error_code}): {error_body[:150]}"
                             })
@@ -511,19 +612,21 @@ def chat_stream():
 
                     content_type = r.headers.get('content-type', '')
 
-                    # Fallback: si por algún motivo la API no responde con SSE
                     if 'text/event-stream' not in content_type:
                         try:
                             data_json = r.json()
                             content = data_json["choices"][0]["message"]["content"]
                             yield sse_event("chunk", {"text": content})
                             yield sse_event("done", {})
+                            latency = _time.time() - attempt_start
+                            MODEL_HEALTH[model].record_success(latency)
+                            print(f"✅ Modelo {model} respondió OK (no-SSE, {latency:.2f}s)")
                             return
                         except Exception as e:
                             last_error_msg = f"Parse error ({model}): {e}"
+                            MODEL_HEALTH[model].record_failure()
                             continue
 
-                    # SSE parsing
                     current_status = None
                     model_emitted_any_chunk = False
                     model_emitted_status = False
@@ -544,7 +647,6 @@ def chat_stream():
                                 continue
                             delta = choices[0].get("delta", {})
 
-                            # Procesar reasoning_content → traducir a status en español
                             rc = delta.get("reasoning_content", "")
                             if rc:
                                 new_status = detect_status(rc)
@@ -553,7 +655,6 @@ def chat_stream():
                                     model_emitted_status = True
                                     yield sse_event("status", {"text": new_status})
 
-                            # Procesar content → fragmento de respuesta
                             c = delta.get("content", "")
                             if c:
                                 any_chunk_emitted = True
@@ -561,43 +662,46 @@ def chat_stream():
                                 full_response_for_cache += c
                                 yield sse_event("chunk", {"text": c})
 
-                            # Si terminó, cortamos
                             if choices[0].get("finish_reason") == "stop":
                                 break
                         except json.JSONDecodeError:
                             continue
 
-                    # Si este modelo emitió al menos un chunk o un status, damos por buena la request
                     if model_emitted_any_chunk or model_emitted_status:
-                        # Guardar en cache si la respuesta es útil (mínimo 20 chars)
                         if len(full_response_for_cache.strip()) > 20:
                             set_cached_response(cache_key, full_response_for_cache)
                             print(f"💾 Respuesta guardada en cache ({len(full_response_for_cache)} chars)")
+                        latency = _time.time() - attempt_start
+                        MODEL_HEALTH[model].record_success(latency)
                         yield sse_event("done", {})
-                        print(f"✅ Modelo {model} respondió OK")
+                        print(f"✅ Modelo {model} respondió OK ({latency:.2f}s)")
+                        # Log de estado cada 10 requests exitosas
+                        if MODEL_HEALTH[model].success_count % 10 == 0:
+                            print_model_health()
                         return
                     else:
-                        # El modelo no emitió nada útil → probamos el siguiente
                         print(f"⚠️ Modelo {model} no emitió chunks. Probando siguiente...")
                         last_error_msg = f"Modelo {model} no respondió contenido"
+                        MODEL_HEALTH[model].record_failure()
                         continue
 
             except requests.exceptions.Timeout:
                 last_error_msg = f"Timeout con modelo {model}"
                 print(f"⏰ Timeout con {model}. Probando siguiente...")
+                MODEL_HEALTH[model].record_failure()
                 continue
             except Exception as e:
                 last_error_msg = f"Error con modelo {model}: {e}"
                 print(f"❌ Error con {model}: {e}. Probando siguiente...")
+                MODEL_HEALTH[model].record_failure()
                 continue
 
-        # Si llegamos acá, todos los modelos fallaron
+        # Si llegamos acá, todos los intentos fallaron
         if any_chunk_emitted:
-            # Ya habíamos emitido algo, cerramos el stream normalmente
             yield sse_event("done", {})
         else:
             yield sse_event("error", {
-                "message": f"Todos los modelos de Z.ai están saturados. Detalle del último error: {last_error_msg or 'desconocido'}"
+                "message": f"Todos los modelos están saturados. Detalle del último error: {last_error_msg or 'desconocido'}"
             })
 
     return Response(
